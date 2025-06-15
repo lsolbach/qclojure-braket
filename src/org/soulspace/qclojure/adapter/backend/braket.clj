@@ -1,9 +1,9 @@
 (ns org.soulspace.qclojure.adapter.backend.braket
   "AWS Braket backend implementation for QClojure quantum computing library.
    
-   This namespace provides a production-grade backend that connects QClojure
-   to Amazon Braket quantum computing services, supporting both simulators
-   and quantum hardware devices."
+   This namespace provides a backend that connects QClojure to Amazon Braket
+   quantum computing services, supporting both simulators and quantum hardware
+   devices."
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [cognitect.aws.client.api :as aws]
@@ -90,7 +90,7 @@
   [backend client device-arn circuit options]
   (let [transformed (ct/transform-circuit
                      circuit
-                     (qb/get-supported-gates? backend))
+                     (qb/get-supported-gates backend))
         openqasm (qasm3/circuit-to-qasm transformed)
         shots (get options :shots 1000)
         task-request {:deviceArn device-arn
