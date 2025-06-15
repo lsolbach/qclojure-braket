@@ -89,9 +89,9 @@
 (s/def ::device-type #{:quantum :simulator})
 
 (s/def ::backend-config
-  (s/keys :opt-un [::device-arn 
-                   ::region 
-                   ::shots 
+  (s/keys :opt-un [::device-arn
+                   ::region
+                   ::shots
                    ::max-parallel-shots
                    ::device-type]))
 
@@ -111,7 +111,7 @@
 
 (s/def ::task-result
   (s/keys :opt-un [::measurements
-                   ::measurement-counts  
+                   ::measurement-counts
                    ::probabilities
                    ::task-metadata
                    ::s3-location]))
@@ -132,15 +132,15 @@
   [pricing-client service-code region _device-type]
   (try
     (let [filters [{:Type "TERM_MATCH"
-                   :Field "ServiceCode"
-                   :Value service-code}
-                  {:Type "TERM_MATCH"
-                   :Field "Location"
-                   :Value (or region "US East (N. Virginia)")}]
+                    :Field "ServiceCode"
+                    :Value service-code}
+                   {:Type "TERM_MATCH"
+                    :Field "Location"
+                    :Value (or region "US East (N. Virginia)")}]
           response (aws/invoke pricing-client {:op :GetProducts
-                                             :request {:ServiceCode service-code
-                                                      :Filters filters
-                                                      :MaxResults 100}})]
+                                               :request {:ServiceCode service-code
+                                                         :Filters filters
+                                                         :MaxResults 100}})]
       (if (:cognitect.anomalies/category response)
         {:error response}
         {:products (:PriceList response)}))
@@ -155,30 +155,30 @@
     (let [products (map #(json/read-str % :key-fn keyword) pricing-products)
           task-pricing (atom {:price-per-task 0.0 :price-per-shot 0.0})
           currency (atom "USD")]
-      
+
       (doseq [product products]
         (let [product-attrs (:attributes (:product product))
               pricing-dims (-> product :terms :OnDemand vals first :priceDimensions vals first)
               price-per-unit (-> pricing-dims :pricePerUnit :USD)
               unit (:unit pricing-dims)]
-          
+
           (when price-per-unit
             (reset! currency "USD")
             (cond
-              (and (= unit "Request") 
+              (and (= unit "Request")
                    (str/includes? (str (:usagetype product-attrs)) "Task"))
               (swap! task-pricing assoc :price-per-task (Double/parseDouble price-per-unit))
-              
+
               (and (= unit "Shot")
                    (str/includes? (str (:usagetype product-attrs)) "Shot"))
               (swap! task-pricing assoc :price-per-shot (Double/parseDouble price-per-unit))))))
-      
+
       {:price-per-task (:price-per-task @task-pricing)
        :price-per-shot (:price-per-shot @task-pricing)
        :currency @currency
        :last-updated (System/currentTimeMillis)
        :device-type device-type})
-    
+
     (catch Exception e
       {:error {:message (.getMessage e)
                :type :pricing-parse-error}})))
@@ -188,10 +188,10 @@
   [backend device-type region]
   (let [cache-key (str device-type "-" region)
         cached-pricing (get-in @(:state backend) [:pricing-cache cache-key])
-        cache-age (when cached-pricing 
-                   (- (System/currentTimeMillis) (:last-updated cached-pricing)))
+        cache-age (when cached-pricing
+                    (- (System/currentTimeMillis) (:last-updated cached-pricing)))
         cache-valid? (and cached-pricing (< cache-age (* 24 60 60 1000)))] ; 24 hours
-    
+
     (if cache-valid?
       cached-pricing
       ;; Fetch fresh pricing data
@@ -217,7 +217,7 @@
                  :source :fallback}
                 (do
                   ;; Cache the successful result
-                  (swap! (:state backend) assoc-in [:pricing-cache cache-key] 
+                  (swap! (:state backend) assoc-in [:pricing-cache cache-key]
                          (assoc parsed-pricing :source :api))
                   (assoc parsed-pricing :source :api))))))
         ;; No pricing client, use fallback
@@ -246,8 +246,8 @@
   [s3-client bucket key]
   (try
     (let [response (aws/invoke s3-client {:op :GetObject
-                                         :request {:Bucket bucket
-                                                  :Key key}})]
+                                          :request {:Bucket bucket
+                                                    :Key key}})]
       (if (:cognitect.anomalies/category response)
         {:error response}
         {:content (slurp (:Body response))}))
@@ -265,7 +265,7 @@
           measurements (:measurements results)
           measurement-counts (:measurementCounts results)
           measurement-probabilities (:measurementProbabilities results)]
-      
+
       {:raw-results results
        :measurements (or measurements measurement-counts)
        :probabilities measurement-probabilities
@@ -282,13 +282,13 @@
   (if-let [s3-location (parse-s3-location task-response)]
     (let [{:keys [bucket results-key]} s3-location
           results-download (download-s3-object s3-client bucket results-key)]
-      
+
       (if (:error results-download)
         {:error (:error results-download)}
         (let [parsed-results (parse-braket-results (:content results-download))]
           (if (:error parsed-results)
             {:error (:error parsed-results)}
-            (merge parsed-results 
+            (merge parsed-results
                    {:s3-location s3-location
                     :retrieved-at (System/currentTimeMillis)})))))
     {:error {:message "No S3 output location found in task response"
@@ -332,7 +332,7 @@
    :simulator 0.1 ; Simulators are much cheaper
    :default 1.0})
 
-(defn- parse-device-info 
+(defn- parse-device-info
   "Parse device information from AWS Braket device ARN"
   [device-arn]
   (when device-arn
@@ -370,7 +370,7 @@
         circuit-gates (set (keys (:gates circuit)))
         qubit-count (:qubit-count circuit 0)
         unsupported-gates (set/difference circuit-gates supported-gates)]
-    
+
     {:valid? (and (<= qubit-count (:max-qubits constraints))
                   (empty? unsupported-gates))
      :qubit-count qubit-count
@@ -384,7 +384,7 @@
 (defn- cache-devices!
   "Cache the list of available devices for 5 minutes to avoid excessive API calls"
   [backend devices]
-  (swap! (:state backend) assoc 
+  (swap! (:state backend) assoc
          :devices-cache devices
          :last-devices-refresh (System/currentTimeMillis)))
 
@@ -418,9 +418,9 @@
         openqasm (qasm3/circuit-to-qasm transformed)
         shots (get options :shots 1000)
         task-request {:deviceArn device-arn
-                     :action {:source openqasm
-                             :sourceType "OPENQASM_3"}
-                     :shots shots}]
+                      :action {:source openqasm
+                               :sourceType "OPENQASM_3"}
+                      :shots shots}]
     (aws/invoke client {:op :CreateQuantumTask :request task-request})))
 
 (defprotocol AmazonBraketBackend
@@ -759,7 +759,7 @@
          :results results
          :completed-at (System/currentTimeMillis)})
       {:error "Batch not found"}))
-  
+
   AmazonBraketBackend
   (get-device-info [_this device-arn]
     "Get comprehensive device information including provider-specific details"
@@ -777,7 +777,7 @@
 (defn create-braket-backend
   "Create a new Braket backend instance.
    
-   Args:
+   Parameters:
      config - Configuration map with keys:
        :region - AWS region (optional, defaults to us-east-1)
        :device-arn - ARN of the Braket device (optional, defaults to simulator) 
@@ -796,18 +796,18 @@
    (create-braket-backend {}))
   ([config]
    (let [merged-config (merge {:region "us-east-1"
-                              :shots 1000 
-                              :max-parallel-shots 10
-                              :device-type :simulator} 
-                             config)
+                               :shots 1000
+                               :max-parallel-shots 10
+                               :device-type :simulator}
+                              config)
          client (create-braket-client merged-config)
          s3-client (create-s3-client merged-config)
          pricing-client (create-pricing-client merged-config)
-         initial-state (atom {:jobs {} 
-                             :batches {}
-                             :devices-cache nil
-                             :last-devices-refresh nil
-                             :pricing-cache {}})]
+         initial-state (atom {:jobs {}
+                              :batches {}
+                              :devices-cache nil
+                              :last-devices-refresh nil
+                              :pricing-cache {}})]
      (->BraketBackend client s3-client pricing-client merged-config initial-state {}))))
 
 (defn create-braket-simulator
@@ -817,13 +817,13 @@
      BraketBackend configured for the default AWS Braket simulator"
   []
   (create-braket-backend {:device-arn "arn:aws:braket:::device/quantum-simulator/amazon/sv1"
-                         :device-type :simulator
-                         :region "us-east-1"}))
+                          :device-type :simulator
+                          :region "us-east-1"}))
 
 (defn create-braket-qpu
   "Create a Braket QPU backend for quantum hardware execution.
-   
-   Args:
+
+   Parameters:
      device-arn - ARN of the specific QPU device
      region - AWS region where the device is located (optional)
    
@@ -831,66 +831,67 @@
      BraketBackend configured for the specified QPU"
   [device-arn & {:keys [region] :or {region "us-east-1"}}]
   (create-braket-backend {:device-arn device-arn
-                         :device-type :quantum
-                         :region region}))
+                          :device-type :quantum
+                          :region region}))
 
 (comment
   ;; REPL experimentation and testing
 
   ;; Create test backend
   (def test-backend (create-braket-simulator))
-  
+
   ;; Test S3 location parsing
-  (def mock-task-response 
+  (def mock-task-response
     {:outputS3Bucket "quantum-task-outputs"
      :outputS3Directory "tasks/arn-aws-braket-us-east-1-123456789012-quantum-task-12345"
      :quantumTaskStatus "COMPLETED"})
-  
+
   (parse-s3-location mock-task-response)
-  
+
   ;; Test result parsing with different formats
   (def mock-measurement-counts-json
     "{\"measurementCounts\": {\"000\": 334, \"001\": 342, \"010\": 162, \"011\": 162}}")
-  
+
   (def mock-measurements-json
     "{\"measurements\": [[0, 1, 0], [1, 0, 1], [0, 0, 0]]}")
-    
+
   (def mock-statevector-json
     "{\"statevector\": [0.5, 0.5, 0.0, 0.0, 0.5, 0.5, 0.0, 0.0]}")
-    
+
   (parse-braket-results mock-measurement-counts-json)
   (parse-braket-results mock-measurements-json)
   (parse-braket-results mock-statevector-json)
-  
+
   ;; Test backend info
   (qb/get-backend-info test-backend)
-  
+
   ;; Test device availability check
   (qb/is-available? test-backend)
-  
+
   ;; Test supported gates
   (qb/get-supported-gates test-backend)
-  
+
   ;; Test error handling
   (parse-braket-results "invalid json")
   (parse-s3-location {:no-s3-bucket true})
-  
+
   ;; Test pricing functionality
   (def mock-pricing-products
     ["{\"product\": {\"attributes\": {\"serviceName\": \"Amazon Braket\", \"usagetype\": \"Task-Request\"}}, 
        \"terms\": {\"OnDemand\": {\"test-term\": {\"priceDimensions\": {\"test-dim\": {\"unit\": \"Request\", \"pricePerUnit\": {\"USD\": \"0.075\"}}}}}}}"])
-  
+
   (parse-braket-pricing mock-pricing-products :simulator)
-  
+
   ;; Test cost estimation
   (def mock-circuit {:gate-count 10})
   (def mock-circuits [{:gate-count 5} {:gate-count 8} {:gate-count 12}])
-  
+
   (qb/estimate-cost test-backend mock-circuit {:shots 1000})
   (qb/estimate-cost test-backend mock-circuits {:shots 500})
-  
+
   ;; Test QPU pricing
   (def qpu-backend (create-braket-qpu "arn:aws:braket:us-east-1::device/qpu/rigetti/aspen-m-3"))
   (qb/estimate-cost qpu-backend mock-circuit {:shots 1000})
   
+  ;
   )
