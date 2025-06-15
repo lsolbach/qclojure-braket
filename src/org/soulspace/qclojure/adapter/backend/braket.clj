@@ -6,6 +6,7 @@
    devices."
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
+            [clojure.data.json :as json]
             [cognitect.aws.client.api :as aws]
             [org.soulspace.qclojure.application.format.qasm3 :as qasm3]
             [org.soulspace.qclojure.application.backend :as qb]
@@ -18,6 +19,16 @@
   "Default configuration for AWS Braket client"
   {:api :braket
    :region "us-east-1"}) ; Default region - credentials-provider defaults to shared provider
+
+(def ^:private default-s3-config
+  "Default configuration for AWS S3 client"
+  {:api :s3
+   :region "us-east-1"})
+
+(def ^:private default-pricing-config
+  "Default configuration for AWS Pricing client"
+  {:api :pricing
+   :region "us-east-1"}) ; Pricing API is available in us-east-1 and ap-south-1
 
 (defn create-braket-client
   "Creates an AWS Braket client with optional configuration overrides.
@@ -34,6 +45,37 @@
    (create-braket-client {}))
   ([config-overrides]
    (let [config (merge default-braket-config config-overrides)]
+     (aws/client config))))
+
+(defn create-s3-client
+  "Creates an AWS S3 client with optional configuration overrides.
+   
+   Args:
+     config-overrides - Map of configuration overrides (optional)
+   
+   Returns:
+     AWS S3 client instance"
+  ([]
+   (create-s3-client {}))
+  ([config-overrides]
+   (let [config (merge default-s3-config config-overrides)]
+     (aws/client config))))
+
+(defn create-pricing-client
+  "Creates an AWS Pricing client with optional configuration overrides.
+   
+   Args:
+     config-overrides - Map of configuration overrides (optional)
+   
+   Returns:
+     AWS Pricing client instance
+     
+   Note:
+     The Pricing API is only available in us-east-1 and ap-south-1 regions"
+  ([]
+   (create-pricing-client {}))
+  ([config-overrides]
+   (let [config (merge default-pricing-config config-overrides)]
      (aws/client config))))
 
 ;;
@@ -53,6 +95,203 @@
                    ::device-type]))
 
 (s/def ::circuit-definition map?) ; We'll refine this based on QClojure's circuit format
+
+;; S3 and result specs
+(s/def ::bucket string?)
+(s/def ::key string?)
+(s/def ::s3-location
+  (s/keys :req-un [::bucket]
+          :opt-un [::key]))
+
+(s/def ::measurement-outcome (s/coll-of (s/int-in 0 2)))
+(s/def ::measurements (s/coll-of ::measurement-outcome))
+(s/def ::measurement-counts (s/map-of string? pos-int?))
+(s/def ::probabilities (s/map-of string? (s/double-in 0.0 1.0)))
+
+(s/def ::task-result
+  (s/keys :opt-un [::measurements
+                   ::measurement-counts  
+                   ::probabilities
+                   ::task-metadata
+                   ::s3-location]))
+
+;; Pricing specs
+(s/def ::price-per-task (s/double-in 0.0 1000.0))
+(s/def ::price-per-shot (s/double-in 0.0 1.0))
+(s/def ::currency string?)
+(s/def ::pricing-data
+  (s/keys :req-un [::price-per-task ::price-per-shot ::currency]
+          :opt-un [::last-updated ::device-type]))
+
+;;
+;; AWS Pricing Functions
+;;
+(defn- query-braket-pricing
+  "Query AWS Pricing API for Braket service pricing"
+  [pricing-client service-code region _device-type]
+  (try
+    (let [filters [{:Type "TERM_MATCH"
+                   :Field "ServiceCode"
+                   :Value service-code}
+                  {:Type "TERM_MATCH"
+                   :Field "Location"
+                   :Value (or region "US East (N. Virginia)")}]
+          response (aws/invoke pricing-client {:op :GetProducts
+                                             :request {:ServiceCode service-code
+                                                      :Filters filters
+                                                      :MaxResults 100}})]
+      (if (:cognitect.anomalies/category response)
+        {:error response}
+        {:products (:PriceList response)}))
+    (catch Exception e
+      {:error {:message (.getMessage e)
+               :type :pricing-api-error}})))
+
+(defn- parse-braket-pricing
+  "Parse Braket pricing from AWS Pricing API response"
+  [pricing-products device-type]
+  (try
+    (let [products (map #(json/read-str % :key-fn keyword) pricing-products)
+          task-pricing (atom {:price-per-task 0.0 :price-per-shot 0.0})
+          currency (atom "USD")]
+      
+      (doseq [product products]
+        (let [product-attrs (:attributes (:product product))
+              pricing-dims (-> product :terms :OnDemand vals first :priceDimensions vals first)
+              price-per-unit (-> pricing-dims :pricePerUnit :USD)
+              unit (:unit pricing-dims)]
+          
+          (when price-per-unit
+            (reset! currency "USD")
+            (cond
+              (and (= unit "Request") 
+                   (str/includes? (str (:usagetype product-attrs)) "Task"))
+              (swap! task-pricing assoc :price-per-task (Double/parseDouble price-per-unit))
+              
+              (and (= unit "Shot")
+                   (str/includes? (str (:usagetype product-attrs)) "Shot"))
+              (swap! task-pricing assoc :price-per-shot (Double/parseDouble price-per-unit))))))
+      
+      {:price-per-task (:price-per-task @task-pricing)
+       :price-per-shot (:price-per-shot @task-pricing)
+       :currency @currency
+       :last-updated (System/currentTimeMillis)
+       :device-type device-type})
+    
+    (catch Exception e
+      {:error {:message (.getMessage e)
+               :type :pricing-parse-error}})))
+
+(defn- get-braket-pricing
+  "Get cached or fresh pricing data for Braket services"
+  [backend device-type region]
+  (let [cache-key (str device-type "-" region)
+        cached-pricing (get-in @(:state backend) [:pricing-cache cache-key])
+        cache-age (when cached-pricing 
+                   (- (System/currentTimeMillis) (:last-updated cached-pricing)))
+        cache-valid? (and cached-pricing (< cache-age (* 24 60 60 1000)))] ; 24 hours
+    
+    (if cache-valid?
+      cached-pricing
+      ;; Fetch fresh pricing data
+      (if-let [pricing-client (:pricing-client backend)]
+        (let [service-code "AmazonBraket"
+              pricing-response (query-braket-pricing pricing-client service-code region device-type)]
+          (if (:error pricing-response)
+            ;; Fallback to estimated pricing on error
+            {:price-per-task (if (= device-type :simulator) 0.075 0.30)
+             :price-per-shot (if (= device-type :simulator) 0.0 0.00019)
+             :currency "USD"
+             :last-updated (System/currentTimeMillis)
+             :device-type device-type
+             :source :fallback}
+            (let [parsed-pricing (parse-braket-pricing (:products pricing-response) device-type)]
+              (if (:error parsed-pricing)
+                ;; Fallback on parse error
+                {:price-per-task (if (= device-type :simulator) 0.075 0.30)
+                 :price-per-shot (if (= device-type :simulator) 0.0 0.00019)
+                 :currency "USD"
+                 :last-updated (System/currentTimeMillis)
+                 :device-type device-type
+                 :source :fallback}
+                (do
+                  ;; Cache the successful result
+                  (swap! (:state backend) assoc-in [:pricing-cache cache-key] 
+                         (assoc parsed-pricing :source :api))
+                  (assoc parsed-pricing :source :api))))))
+        ;; No pricing client, use fallback
+        {:price-per-task (if (= device-type :simulator) 0.075 0.30)
+         :price-per-shot (if (= device-type :simulator) 0.0 0.00019)
+         :currency "USD"
+         :last-updated (System/currentTimeMillis)
+         :device-type device-type
+         :source :fallback}))))
+
+;;
+;; S3 Result Retrieval Functions
+;;
+(defn- parse-s3-location
+  "Parse S3 bucket and key from Braket task response"
+  [task-response]
+  (when-let [output-s3-bucket (:outputS3Bucket task-response)]
+    (let [output-s3-dir (:outputS3Directory task-response)]
+      {:bucket output-s3-bucket
+       :key-prefix (str output-s3-dir "/")
+       :results-key (str output-s3-dir "/results.json")
+       :task-metadata-key (str output-s3-dir "/task-metadata.json")})))
+
+(defn- download-s3-object
+  "Download an object from S3 and return its content as a string"
+  [s3-client bucket key]
+  (try
+    (let [response (aws/invoke s3-client {:op :GetObject
+                                         :request {:Bucket bucket
+                                                  :Key key}})]
+      (if (:cognitect.anomalies/category response)
+        {:error response}
+        {:content (slurp (:Body response))}))
+    (catch Exception e
+      {:error {:message (.getMessage e)
+               :type :s3-error
+               :bucket bucket
+               :key key}})))
+
+(defn- parse-braket-results
+  "Parse Braket quantum task results from JSON"
+  [results-json]
+  (try
+    (let [results (json/read-str results-json :key-fn keyword)
+          measurements (:measurements results)
+          measurement-counts (:measurementCounts results)
+          measurement-probabilities (:measurementProbabilities results)]
+      
+      {:raw-results results
+       :measurements (or measurements measurement-counts)
+       :probabilities measurement-probabilities
+       :task-metadata (:taskMetadata results)
+       :additional-metadata (:additionalMetadata results)})
+    (catch Exception e
+      {:error {:message (.getMessage e)
+               :type :json-parse-error
+               :content results-json}})))
+
+(defn- retrieve-task-results
+  "Retrieve and parse results from S3 for a completed Braket task"
+  [s3-client task-response]
+  (if-let [s3-location (parse-s3-location task-response)]
+    (let [{:keys [bucket results-key]} s3-location
+          results-download (download-s3-object s3-client bucket results-key)]
+      
+      (if (:error results-download)
+        {:error (:error results-download)}
+        (let [parsed-results (parse-braket-results (:content results-download))]
+          (if (:error parsed-results)
+            {:error (:error parsed-results)}
+            (merge parsed-results 
+                   {:s3-location s3-location
+                    :retrieved-at (System/currentTimeMillis)})))))
+    {:error {:message "No S3 output location found in task response"
+             :type :missing-s3-location}}))
 
 ;;
 ;; Device Management Functions
@@ -99,7 +338,7 @@
                      :shots shots}]
     (aws/invoke client {:op :CreateQuantumTask :request task-request})))
 
-(defrecord BraketBackend [client config state session-info]
+(defrecord BraketBackend [client s3-client pricing-client config state session-info]
   ;; Basic backend info
   Object
   (toString [_this]
@@ -153,11 +392,19 @@
         (if (:cognitect.anomalies/category response)
           {:error response}
           (if (= "COMPLETED" (:quantumTaskStatus response))
-            ; In a real implementation, we'd parse the measurement results from outputS3Bucket
-            {:measurements [{:0 512 :1 488}] ; Placeholder result
-             :shots (:shots (:options job-info))
-             :execution-time-ms 1000
-             :task-arn task-arn}
+            ;; Retrieve actual results from S3
+            (let [s3-results (retrieve-task-results s3-client response)]
+              (if (:error s3-results)
+                {:error (:error s3-results)}
+                {:measurements (:measurements s3-results)
+                 :probabilities (:probabilities s3-results)
+                 :shots (:shots (:options job-info))
+                 :execution-time-ms (- (System/currentTimeMillis) 
+                                      (:submitted-at job-info))
+                 :task-arn task-arn
+                 :raw-results (:raw-results s3-results)
+                 :task-metadata (:task-metadata s3-results)
+                 :s3-location (:s3-location s3-results)}))
             {:error "Job not completed yet"})))
       {:error "Job not found"}))
 
@@ -197,7 +444,7 @@
         (catch Exception e
           {:error {:message (.getMessage e) :type :api-error}}))))
 
-  (is-available? [this]
+  (is-available? [_this]
     "Check if the backend is available for job submission"
     (let [device-arn (or (:device-arn config) 
                          "arn:aws:braket:::device/quantum-simulator/amazon/sv1")]
@@ -291,32 +538,39 @@
           {:error response}
           ;; Braket doesn't expose detailed calibration data via API
           ;; Return what's available from device capabilities
-          (let [capabilities (:deviceCapabilities response)]
-            {:device-arn device-arn
-             :calibration-available false
-             :device-status (:deviceStatus response)
-             :last-updated (System/currentTimeMillis)
-             :note "Braket API does not expose detailed calibration data"})))
+          {:device-arn device-arn
+           :calibration-available false
+           :device-status (:deviceStatus response)
+           :last-updated (System/currentTimeMillis)
+           :note "Braket API does not expose detailed calibration data"}))
       (catch Exception e
         {:error {:message (.getMessage e) :type :api-error}})))
 
-  (estimate-cost [_this circuits options]
+  (estimate-cost [this circuits options]
     "Estimate the cost of running circuits"
     (let [device-arn (or (:device-arn config) 
                          "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
           shots (get options :shots 1000)
           circuit-count (if (sequential? circuits) (count circuits) 1)
           total-shots (* circuit-count shots)
-          is-simulator? (str/includes? device-arn "simulator")
-          base-cost (if is-simulator? 0.075 0.30) ; Per task
-          shot-cost (if is-simulator? 0.0 0.00019) ; Per shot for QPU
+          device-type (if (str/includes? device-arn "simulator") :simulator :quantum)
+          region (:region config "us-east-1")
+          pricing-data (get-braket-pricing this device-type region)
+          base-cost (:price-per-task pricing-data)
+          shot-cost (:price-per-shot pricing-data)
           circuit-complexity (get (if (sequential? circuits) (first circuits) circuits) :gate-count 10)]
-      {:estimated-cost-usd (+ base-cost (* total-shots shot-cost))
-       :cost-breakdown {:base base-cost 
-                       :per-shot shot-cost
-                       :total-shots total-shots}
-       :device-type (if is-simulator? :simulator :qpu)
-       :complexity-factor circuit-complexity}))
+      {:estimated-cost-usd (+ (* circuit-count base-cost) (* total-shots shot-cost))
+       :cost-breakdown {:base-cost-per-task base-cost
+                       :shot-cost-per-shot shot-cost
+                       :total-tasks circuit-count
+                       :total-shots total-shots
+                       :task-cost (* circuit-count base-cost)
+                       :shot-cost (* total-shots shot-cost)}
+       :device-type device-type
+       :complexity-factor circuit-complexity
+       :currency (:currency pricing-data)
+       :pricing-source (:source pricing-data)
+       :last-updated (:last-updated pricing-data)}))
 
   (batch-submit [this circuits options]
     "Submit multiple circuits as a batch"
@@ -412,11 +666,14 @@
                               :device-type :simulator} 
                              config)
          client (create-braket-client merged-config)
+         s3-client (create-s3-client merged-config)
+         pricing-client (create-pricing-client merged-config)
          initial-state (atom {:jobs {} 
                              :batches {}
                              :devices-cache nil
-                             :last-devices-refresh nil})]
-     (->BraketBackend client merged-config initial-state {}))))
+                             :last-devices-refresh nil
+                             :pricing-cache {}})]
+     (->BraketBackend client s3-client pricing-client merged-config initial-state {}))))
 
 (defn create-braket-simulator
   "Create a Braket simulator backend for local testing.
@@ -441,3 +698,64 @@
   (create-braket-backend {:device-arn device-arn
                          :device-type :quantum
                          :region region}))
+
+(comment
+  ;; REPL experimentation and testing
+
+  ;; Create test backend
+  (def test-backend (create-braket-simulator))
+  
+  ;; Test S3 location parsing
+  (def mock-task-response 
+    {:outputS3Bucket "quantum-task-outputs"
+     :outputS3Directory "tasks/arn-aws-braket-us-east-1-123456789012-quantum-task-12345"
+     :quantumTaskStatus "COMPLETED"})
+  
+  (parse-s3-location mock-task-response)
+  
+  ;; Test result parsing with different formats
+  (def mock-measurement-counts-json
+    "{\"measurementCounts\": {\"000\": 334, \"001\": 342, \"010\": 162, \"011\": 162}}")
+  
+  (def mock-measurements-json
+    "{\"measurements\": [[0, 1, 0], [1, 0, 1], [0, 0, 0]]}")
+    
+  (def mock-statevector-json
+    "{\"statevector\": [0.5, 0.5, 0.0, 0.0, 0.5, 0.5, 0.0, 0.0]}")
+    
+  (parse-braket-results mock-measurement-counts-json)
+  (parse-braket-results mock-measurements-json)
+  (parse-braket-results mock-statevector-json)
+  
+  ;; Test backend info
+  (qb/get-backend-info test-backend)
+  
+  ;; Test device availability check
+  (qb/is-available? test-backend)
+  
+  ;; Test supported gates
+  (qb/get-supported-gates test-backend)
+  
+  ;; Test error handling
+  (parse-braket-results "invalid json")
+  (parse-s3-location {:no-s3-bucket true})
+  
+  ;; Test pricing functionality
+  (def mock-pricing-products
+    ["{\"product\": {\"attributes\": {\"serviceName\": \"Amazon Braket\", \"usagetype\": \"Task-Request\"}}, 
+       \"terms\": {\"OnDemand\": {\"test-term\": {\"priceDimensions\": {\"test-dim\": {\"unit\": \"Request\", \"pricePerUnit\": {\"USD\": \"0.075\"}}}}}}}"])
+  
+  (parse-braket-pricing mock-pricing-products :simulator)
+  
+  ;; Test cost estimation
+  (def mock-circuit {:gate-count 10})
+  (def mock-circuits [{:gate-count 5} {:gate-count 8} {:gate-count 12}])
+  
+  (qb/estimate-cost test-backend mock-circuit {:shots 1000})
+  (qb/estimate-cost test-backend mock-circuits {:shots 500})
+  
+  ;; Test QPU pricing
+  (def qpu-backend (create-braket-qpu "arn:aws:braket:us-east-1::device/qpu/rigetti/aspen-m-3"))
+  (qb/estimate-cost qpu-backend mock-circuit {:shots 1000})
+  
+  )
