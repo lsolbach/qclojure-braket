@@ -7,4 +7,4 @@
                  [com.cognitect.aws/braket    "871.2.29.35"]
                  [com.cognitect.aws/pricing   "871.2.31.23"]
                  [com.cognitect.aws/iam       "871.2.30.22"]
-                 [org.soulspace/qclojure      "0.1.0"]])
+                 [org.soulspace/qclojure      "0.8.0"]])
