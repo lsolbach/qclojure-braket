@@ -425,8 +425,12 @@
 
 (defprotocol AmazonBraketBackend
   "Protocol for interacting with AWS Braket"
+  (get-provider-info [this provider]
+    "Get information about a specific QPU provider")
   (get-device-info [this device-arn]
-    "Get comprehensive device information including provider-specific details"))
+    "Get comprehensive device information including provider-specific details")
+  (validate-circuit [this circuit]
+    "Validate if a circuit can run on the configured device"))
 
 (defrecord BraketBackend [client s3-client pricing-client config state session-info]
   ;; Basic backend info
@@ -521,23 +525,6 @@
                   (set (map keyword native-gates)))))
             (catch Exception _e
               #{:h :x :y :z :cnot :measure}))))))
-
-  (validate-circuit [_this circuit]
-    "Validate if a circuit can run on the configured device"
-    (let [device-arn (or (:device-arn config)
-                         "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
-          device-info (parse-device-info device-arn)]
-      (if device-info
-        (validate-circuit-for-device circuit device-info)
-        {:valid? false
-         :error "Unable to parse device information"})))
-
-  (get-provider-info [_this provider]
-    "Get information about a specific QPU provider"
-    {:provider provider
-     :supported-gates (get-provider-gate-set provider)
-     :constraints (get-provider-constraints provider)
-     :pricing-multiplier (get-provider-pricing-multiplier provider)})
 
   (get-queue-status [_this]
     "Get queue status information for the configured device"
@@ -761,6 +748,13 @@
       {:error "Batch not found"}))
 
   AmazonBraketBackend
+  (get-provider-info [_this provider]
+                   "Get information about a specific QPU provider"
+                   {:provider provider
+                    :supported-gates (get-provider-gate-set provider)
+                    :constraints (get-provider-constraints provider)
+                    :pricing-multiplier (get-provider-pricing-multiplier provider)})
+
   (get-device-info [_this device-arn]
     "Get comprehensive device information including provider-specific details"
     (let [device-info (parse-device-info device-arn)
@@ -768,7 +762,17 @@
       (merge device-info
              {:supported-gates (get-provider-gate-set provider)
               :constraints (get-provider-constraints provider)
-              :pricing-multiplier (get-provider-pricing-multiplier provider)}))))
+              :pricing-multiplier (get-provider-pricing-multiplier provider)})))
+  
+  (validate-circuit [_this circuit]
+    "Validate if a circuit can run on the configured device"
+    (let [device-arn (or (:device-arn config)
+                         "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
+          device-info (parse-device-info device-arn)]
+      (if device-info
+        (validate-circuit-for-device circuit device-info)
+        {:valid? false
+         :error "Unable to parse device information"}))))
 
 ;;
 ;; Backend Creation Functions
