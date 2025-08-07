@@ -5,6 +5,6 @@
                  [com.cognitect.aws/endpoints "871.2.32.15"]
                  [com.cognitect.aws/s3        "871.2.32.2"]
                  [com.cognitect.aws/braket    "871.2.29.35"]
-                 [com.cognitect.aws/pricing   "871.2.32.22"]
+                 [com.cognitect.aws/pricing   "871.2.32.2"]
                  [com.cognitect.aws/iam       "871.2.32.2"]
                  [org.soulspace/qclojure      "0.10.0"]])
