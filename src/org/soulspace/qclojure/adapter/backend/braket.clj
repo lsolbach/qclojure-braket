@@ -819,10 +819,15 @@
    
    Returns:
      BraketBackend configured for the default AWS Braket simulator"
-  []
-  (create-braket-backend {:device-arn "arn:aws:braket:::device/quantum-simulator/amazon/sv1"
-                          :device-type :simulator
-                          :region "us-east-1"}))
+  ([]
+   (create-braket-backend {:device-arn "arn:aws:braket:::device/quantum-simulator/amazon/sv1"
+                           :device-type :simulator
+                           :region "us-east-1"}))
+  ([config]
+   (create-braket-backend (merge {:device-arn "arn:aws:braket:::device/quantum-simulator/amazon/sv1"
+                                  :device-type :simulator
+                                  :region "us-east-1"}
+                                 config))))
 
 (defn create-braket-qpu
   "Create a Braket QPU backend for quantum hardware execution.
