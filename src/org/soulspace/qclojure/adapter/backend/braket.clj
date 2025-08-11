@@ -458,49 +458,70 @@
           job-id))))
 
   (get-job-status [_this job-id]
-    "Get the status of a submitted job"
+    "Get the status of a submitted job (keyword per protocol)"
     (if-let [job-info (get-in @state [:jobs job-id])]
       (let [task-arn (:task-arn job-info)
             response (aws/invoke client {:op :GetQuantumTask
                                          :request {:quantumTaskArn task-arn}})]
         (if (:cognitect.anomalies/category response)
-          {:status :error :error response}
-          (let [status (:quantumTaskStatus response)]
-            {:status (case status
-                       "CREATED" :submitted
-                       "QUEUED" :queued
-                       "RUNNING" :running
-                       "COMPLETED" :completed
-                       "FAILED" :failed
-                       "CANCELLED" :cancelled
-                       :unknown)
-             :task-arn task-arn})))
-      {:status :not-found :error "Job not found"}))
+          :failed
+          (case (:quantumTaskStatus response)
+            "CREATED" :submitted
+            "QUEUED" :queued
+            "RUNNING" :running
+            "COMPLETED" :completed
+            "FAILED" :failed
+            "CANCELLED" :cancelled
+            :unknown)))
+      :failed))
 
   (get-job-result [_this job-id]
-    "Get the results of a completed job"
+    "Get the results of a completed job (protocol-conformant map)"
     (if-let [job-info (get-in @state [:jobs job-id])]
       (let [task-arn (:task-arn job-info)
             response (aws/invoke client {:op :GetQuantumTask
                                          :request {:quantumTaskArn task-arn}})]
         (if (:cognitect.anomalies/category response)
-          {:error response}
+          {:job-status :failed
+           :job-id job-id
+           :error-message (str "AWS error: " (pr-str response))}
           (if (= "COMPLETED" (:quantumTaskStatus response))
             ;; Retrieve actual results from S3
-            (let [s3-results (retrieve-task-results s3-client response)]
+            (let [s3-results (retrieve-task-results s3-client response)
+                  shots (get-in job-info [:options :shots] 0)]
               (if (:error s3-results)
-                {:error (:error s3-results)}
-                {:measurements (:measurements s3-results)
-                 :probabilities (:probabilities s3-results)
-                 :shots (:shots (:options job-info))
-                 :execution-time-ms (- (System/currentTimeMillis)
-                                       (:submitted-at job-info))
-                 :task-arn task-arn
-                 :raw-results (:raw-results s3-results)
-                 :task-metadata (:task-metadata s3-results)
-                 :s3-location (:s3-location s3-results)}))
-            {:error "Job not completed yet"})))
-      {:error "Job not found"}))
+                {:job-status :failed
+                 :job-id job-id
+                 :error-message (get-in s3-results [:error :message])}
+                (let [meas (:measurements s3-results)
+                      ;; Normalize to QClojure's :measurement-results map {"bitstring" count}
+                      measurement-results (cond
+                                           (map? meas) meas
+                                           (sequential? meas)
+                                           (->> meas
+                                                (map (fn [bits]
+                                                       (->> bits
+                                                            (map str)
+                                                            (apply str))))
+                                                (frequencies))
+                                           :else {})]
+                  {:job-status :completed
+                   :job-id job-id
+                   :measurement-results measurement-results
+                   :probabilities (:probabilities s3-results)
+                   :shots shots
+                   :execution-time-ms (- (System/currentTimeMillis)
+                                         (:submitted-at job-info))
+                   :task-arn task-arn
+                   :raw-results (:raw-results s3-results)
+                   :task-metadata (:task-metadata s3-results)
+                   :s3-location (:s3-location s3-results)})))
+            {:job-status :running
+             :job-id job-id
+             :message "Job not completed yet"})))
+      {:job-status :failed
+       :job-id job-id
+       :error-message "Job not found"}))
 
   (get-supported-gates [_this]
     "Get the gates supported by the current device with enhanced provider-specific logic"
@@ -557,9 +578,13 @@
         (catch Exception _e
           false))))
 
-  (get-backend-info [_this]
-    "Get information about this backend instance"
-    {:backend-type :braket
+  (get-backend-info [this]
+    "Get information about this backend instance (conforms to ::backend-info)"
+    {:backend-type :cloud
+     :backend-name "Amazon Braket"
+     :capabilities #{:cloud :batch :cost-estimation :s3-results}
+     :supported-gates (qb/get-supported-gates this)
+     :backend-config config
      :provider :aws
      :region (:region config)
      :device-arn (:device-arn config)
@@ -577,53 +602,78 @@
           (let [response (aws/invoke client {:op :CancelQuantumTask
                                              :request {:quantumTaskArn task-arn}})]
             (if (:cognitect.anomalies/category response)
-              {:success false :error response}
+              :cannot-cancel
               (do
-                ;; Update job status in our state
                 (swap! state assoc-in [:jobs job-id :cancelled-at] (System/currentTimeMillis))
-                {:success true :task-arn task-arn :cancelled-at (System/currentTimeMillis)})))
-          (catch Exception e
-            {:success false :error {:message (.getMessage e) :type :api-error}})))
-      {:success false :error "Job not found"}))
+                :cancelled)))
+          (catch Exception _e
+            :cannot-cancel)))
+      :not-found))
 
   ;; CloudQuantumBackend protocol implementation  
   qb/CloudQuantumBackend
   (authenticate [_this _credentials]
     "AWS Braket uses AWS credentials, not separate authentication"
-    ; AWS credentials are handled by the AWS SDK
-    {:authenticated true
-     :message "AWS Braket uses AWS SDK credentials"
-     :region (:region config)})
+    {:status :authenticated
+     :region (:region config)
+     :authenticated-at (System/currentTimeMillis)})
 
   (list-available-devices [this]
-    "List all available Braket devices"
-    (if-let [cached (get-cached-devices this)]
-      cached
-      (let [result (list-braket-devices client)]
-        (when-not (:error result)
-          (cache-devices! this (:devices result)))
-        result)))
+    "List all available Braket devices (returns collection as per protocol)"
+    (let [raw-devices (if-let [cached (get-cached-devices this)]
+                        cached
+                        (let [result (list-braket-devices client)]
+                          (:devices result)))
+          normalized (map (fn [d]
+                            {:device-id (:deviceArn d)
+                             :device-name (:deviceName d)
+                             :device-status (case (:deviceStatus d)
+                                              "ONLINE" :online
+                                              "OFFLINE" :offline
+                                              "RETIRED" :maintenance
+                                              :unknown)
+                             :device-type (keyword (str/lower-case (or (:deviceType d) "unknown")))
+                             :provider (keyword (or (:providerName d) "aws"))})
+                          (or raw-devices []))]
+      (when (and (seq normalized) (nil? (get-cached-devices this)))
+        (cache-devices! this normalized))
+      normalized))
 
   ;; Enhanced multi-QPU protocol methods 
   (get-device-topology [_this device-arn]
-    "Get the connectivity topology of a specific device"
+    "Get the connectivity topology of a specific device (protocol-conformant)"
     (try
       (let [response (aws/invoke client {:op :GetDevice
                                          :request {:deviceArn device-arn}})]
         (if (:cognitect.anomalies/category response)
-          {:error response}
+          {:device-id device-arn
+           :device-name (str device-arn)
+           :coupling-map []}
           (let [capabilities (:deviceCapabilities response)
-                connectivity (get-in capabilities [:action :braket.ir.openqasm :supportedConnectivity])]
-            {:device-arn device-arn
-             :connectivity connectivity
-             :max-qubits (get-in capabilities [:action :braket.ir.openqasm :maxQubits])
-             :topology-type (if connectivity :limited :all-to-all)})))
-      (catch Exception e
-        {:error {:message (.getMessage e) :type :api-error}})))
+                device-name (:deviceName response)
+                connectivity (get-in capabilities [:action :braket.ir.openqasm :supportedConnectivity])
+                max-qubits (or (get-in capabilities [:action :braket.ir.openqasm :maxQubits]) 0)
+                coupling-map (cond
+                               (and (sequential? connectivity)
+                                    (every? sequential? connectivity))
+                               (mapv vec connectivity)
+                               (= connectivity "AllToAll")
+                               (vec (for [i (range max-qubits)
+                                          j (range max-qubits)
+                                          :when (not= i j)]
+                                      [i j]))
+                               :else [])]
+            {:device-id device-arn
+             :device-name device-name
+             :coupling-map coupling-map
+             :max-qubits max-qubits})))
+      (catch Exception _e
+        {:device-id device-arn :device-name (str device-arn) :coupling-map []})))
 
   (get-session-info [_this]
     "Get current session information"
-    {:session-id (str "braket-session-" (java.util.UUID/randomUUID))
+    {:status :authenticated
+     :session-id (str "braket-session-" (java.util.UUID/randomUUID))
      :region (:region config)
      :device-arn (:device-arn config)
      :active-jobs (count (get-in @state [:jobs]))
@@ -636,16 +686,15 @@
       (let [response (aws/invoke client {:op :GetDevice
                                          :request {:deviceArn device-arn}})]
         (if (:cognitect.anomalies/category response)
-          {:error response}
-          ;; Braket doesn't expose detailed calibration data via API
-          ;; Return what's available from device capabilities
-          {:device-arn device-arn
-           :calibration-available false
+          {:device-id device-arn
+           :timestamp (java.time.Instant/now)}
+          {:device-id device-arn
+           :timestamp (java.time.Instant/now)
            :device-status (:deviceStatus response)
-           :last-updated (System/currentTimeMillis)
            :note "Braket API does not expose detailed calibration data"}))
-      (catch Exception e
-        {:error {:message (.getMessage e) :type :api-error}})))
+      (catch Exception _e
+        {:device-id device-arn
+         :timestamp (java.time.Instant/now)})))
 
   (estimate-cost [this circuits options]
     "Estimate the cost of running circuits with enhanced provider-specific pricing"
@@ -667,22 +716,26 @@
                                 1.0)
           adjusted-base-cost (* base-cost provider-multiplier)
           adjusted-shot-cost (* shot-cost provider-multiplier)]
-      {:estimated-cost-usd (+ (* circuit-count adjusted-base-cost) (* total-shots adjusted-shot-cost))
-       :cost-breakdown {:base-cost-per-task adjusted-base-cost
-                        :shot-cost-per-shot adjusted-shot-cost
-                        :total-tasks circuit-count
-                        :total-shots total-shots
-                        :task-cost (* circuit-count adjusted-base-cost)
-                        :shot-cost (* total-shots adjusted-shot-cost)
-                        :provider-multiplier provider-multiplier
-                        :original-base-cost base-cost
-                        :original-shot-cost shot-cost}
-       :device-type device-type
-       :provider (get device-info :provider :unknown)
-       :complexity-factor circuit-complexity
-       :currency (:currency pricing-data)
-       :pricing-source (:source pricing-data)
-       :last-updated (:last-updated pricing-data)}))
+  {:total-cost (+ (* circuit-count adjusted-base-cost)
+          (* total-shots adjusted-shot-cost))
+   :currency (:currency pricing-data)
+   :cost-breakdown {:base-cost-per-task adjusted-base-cost
+        :shot-cost-per-shot adjusted-shot-cost
+        :total-tasks circuit-count
+        :total-shots total-shots
+        :task-cost (* circuit-count adjusted-base-cost)
+        :shot-cost (* total-shots adjusted-shot-cost)
+        :provider-multiplier provider-multiplier
+        :original-base-cost base-cost
+        :original-shot-cost shot-cost
+        :device-type device-type
+        :provider (get device-info :provider :unknown)
+        :complexity-factor circuit-complexity}
+   ;; legacy fields retained for convenience
+   :estimated-cost-usd (+ (* circuit-count adjusted-base-cost)
+          (* total-shots adjusted-shot-cost))
+   :pricing-source (:source pricing-data)
+   :last-updated (:last-updated pricing-data)}))
 
   (batch-submit [this circuits options]
     "Submit multiple circuits as a batch"
@@ -719,10 +772,10 @@
   (get-batch-status [this batch-id]
     "Get status of a batch operation"
     (if-let [batch-info (get-in @(:state this) [:batches batch-id])]
-      (let [job-statuses (map #(qb/get-job-status this %) (:job-ids batch-info))
-            completed (count (filter #(= :completed (:status %)) job-statuses))
-            failed (count (filter #(= :failed (:status %)) job-statuses))
-            running (count (filter #(#{:running :queued :submitted} (:status %)) job-statuses))]
+      (let [job-statuses (doall (map #(qb/get-job-status this %) (:job-ids batch-info)))
+            completed (count (filter #(= :completed %) job-statuses))
+            failed (count (filter #(= :failed %) job-statuses))
+            running (count (filter #(#{:running :queued :submitted} %) job-statuses))]
         {:batch-id batch-id
          :total-jobs (count (:job-ids batch-info))
          :completed completed
