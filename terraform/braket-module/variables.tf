@@ -41,6 +41,24 @@ variable "aws_region" {
   type        = string
 }
 
+variable "enable_cloudwatch" {
+  description = "Enable CloudWatch logging for Braket tasks (may incur additional costs)"
+  type        = bool
+  default     = false
+}
+
+variable "cloudwatch_retention_days" {
+  description = "CloudWatch log retention in days (only used if enable_cloudwatch is true)"
+  type        = number
+  default     = 30
+  validation {
+    condition = contains([
+      1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653
+    ], var.cloudwatch_retention_days)
+    error_message = "CloudWatch log retention must be one of the valid AWS values: 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, or 3653 days."
+  }
+}
+
 variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)

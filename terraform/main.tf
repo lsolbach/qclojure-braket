@@ -31,6 +31,10 @@ module "braket_setup" {
   enable_versioning        = var.enable_versioning
   lifecycle_expiration_days = var.lifecycle_expiration_days
   
+  # CloudWatch configuration
+  enable_cloudwatch          = var.enable_cloudwatch
+  cloudwatch_retention_days  = var.cloudwatch_retention_days
+  
   # AWS context
   aws_account_id = data.aws_caller_identity.current.account_id
   aws_region     = data.aws_region.current.name

@@ -32,6 +32,21 @@ output "braket_config" {
   }
 }
 
+output "cloudwatch_log_group_name" {
+  description = "Name of the CloudWatch log group for Braket logs (empty if disabled)"
+  value       = module.braket_setup.cloudwatch_log_group_name
+}
+
+output "cloudwatch_log_group_arn" {
+  description = "ARN of the CloudWatch log group for Braket logs (empty if disabled)"
+  value       = module.braket_setup.cloudwatch_log_group_arn
+}
+
+output "cloudwatch_enabled" {
+  description = "Whether CloudWatch logging is enabled"
+  value       = module.braket_setup.cloudwatch_enabled
+}
+
 output "setup_instructions" {
   description = "Instructions for using this infrastructure with QClojure Braket"
   value = <<-EOT
@@ -48,5 +63,6 @@ output "setup_instructions" {
     S3 Bucket: ${module.braket_setup.bucket_name}
     Region: ${module.braket_setup.bucket_region}
     IAM Role: ${module.braket_setup.iam_role_arn}
+    CloudWatch Logging: ${module.braket_setup.cloudwatch_enabled ? "Enabled" : "Disabled"}${module.braket_setup.cloudwatch_enabled ? "\n    CloudWatch Log Group: ${module.braket_setup.cloudwatch_log_group_name}" : ""}
   EOT
 }

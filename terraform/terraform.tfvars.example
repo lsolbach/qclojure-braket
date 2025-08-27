@@ -16,6 +16,10 @@ enable_versioning = true                  # Enable S3 versioning (recommended)
 # Cost Management
 lifecycle_expiration_days = 90           # Auto-delete results after 90 days
 
+# CloudWatch Configuration
+enable_cloudwatch         = false        # Disable for cost savings in experiments
+cloudwatch_retention_days  = 30          # Log retention (if CloudWatch enabled)
+
 # Additional Tags (optional)
 tags = {
   Project     = "QClojure Quantum Computing"
@@ -26,14 +30,17 @@ tags = {
 
 # Example configurations for different environments:
 
-# Development Environment
+# Development Environment (minimal costs)
 # bucket_name               = "dev-braket-results-yourname"
 # environment              = "dev"
 # lifecycle_expiration_days = 30
 # enable_versioning        = false
+# enable_cloudwatch        = false
 
-# Production Environment  
+# Production Environment (full monitoring)
 # bucket_name               = "prod-braket-results-company"
 # environment              = "prod"
 # lifecycle_expiration_days = 365
 # enable_versioning        = true
+# enable_cloudwatch        = true
+# cloudwatch_retention_days = 90

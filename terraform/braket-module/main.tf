@@ -158,7 +158,7 @@ resource "aws_iam_policy" "braket_policy" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Sid    = "BraketAccess"
         Effect = "Allow"
@@ -195,7 +195,20 @@ resource "aws_iam_policy" "braket_policy" {
         ]
         Resource = "*"
       }
-    ]
+    ], var.enable_cloudwatch ? [
+      {
+        Sid    = "CloudWatchLogsAccess"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:DescribeLogGroups",
+          "logs:DescribeLogStreams"
+        ]
+        Resource = "arn:aws:logs:${var.aws_region}:${var.aws_account_id}:log-group:/aws/braket/${var.name_prefix}*"
+      }
+    ] : [])
   })
 
   tags = var.tags
@@ -209,8 +222,9 @@ resource "aws_iam_role_policy_attachment" "braket_policy_attachment" {
 
 # Optional: CloudWatch log group for monitoring
 resource "aws_cloudwatch_log_group" "braket_logs" {
+  count             = var.enable_cloudwatch ? 1 : 0
   name              = "/aws/braket/${var.name_prefix}"
-  retention_in_days = 30
+  retention_in_days = var.cloudwatch_retention_days
 
   tags = merge(var.tags, {
     Name    = "Braket Logs"

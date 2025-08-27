@@ -34,11 +34,16 @@ output "iam_policy_arn" {
 }
 
 output "cloudwatch_log_group_name" {
-  description = "Name of the CloudWatch log group for Braket logs"
-  value       = aws_cloudwatch_log_group.braket_logs.name
+  description = "Name of the CloudWatch log group for Braket logs (empty if CloudWatch disabled)"
+  value       = var.enable_cloudwatch ? aws_cloudwatch_log_group.braket_logs[0].name : ""
 }
 
 output "cloudwatch_log_group_arn" {
-  description = "ARN of the CloudWatch log group for Braket logs"
-  value       = aws_cloudwatch_log_group.braket_logs.arn
+  description = "ARN of the CloudWatch log group for Braket logs (empty if CloudWatch disabled)"
+  value       = var.enable_cloudwatch ? aws_cloudwatch_log_group.braket_logs[0].arn : ""
+}
+
+output "cloudwatch_enabled" {
+  description = "Whether CloudWatch logging is enabled"
+  value       = var.enable_cloudwatch
 }
