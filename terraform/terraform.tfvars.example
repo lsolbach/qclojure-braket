@@ -1,0 +1,39 @@
+# Example Terraform Variables Configuration
+# Copy this file to terraform.tfvars and customize for your environment
+
+# Basic Configuration
+bucket_name = "my-braket-results-bucket"  # Must be globally unique
+environment = "dev"                       # dev, staging, or prod
+aws_region  = "us-east-1"                # Most Braket devices are in us-east-1
+
+# Resource Naming
+name_prefix = "qclojure-braket"          # Prefix for IAM resources
+
+# Security Settings
+enable_encryption = true                  # Enable S3 encryption (recommended)
+enable_versioning = true                  # Enable S3 versioning (recommended)
+
+# Cost Management
+lifecycle_expiration_days = 90           # Auto-delete results after 90 days
+
+# Additional Tags (optional)
+tags = {
+  Project     = "QClojure Quantum Computing"
+  Owner       = "your-email@example.com"
+  Environment = "development"
+  CostCenter  = "research"
+}
+
+# Example configurations for different environments:
+
+# Development Environment
+# bucket_name               = "dev-braket-results-yourname"
+# environment              = "dev"
+# lifecycle_expiration_days = 30
+# enable_versioning        = false
+
+# Production Environment  
+# bucket_name               = "prod-braket-results-company"
+# environment              = "prod"
+# lifecycle_expiration_days = 365
+# enable_versioning        = true
