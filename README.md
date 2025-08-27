@@ -9,7 +9,7 @@ supported by Amazon Braket.
 Disclaimers:
 * using Amazon Braket costs [money](https://aws.amazon.com/braket/pricing/) even for using simulators
   * use the simulators provided by QClojure for experimentation first
-* the braket backend implementation is *currently* untested
+* the braket backend implementation is *yet* untested against AWS
 
 [![Clojars Project](https://img.shields.io/clojars/v/org.soulspace/qclojure-braket.svg)](https://clojars.org/org.soulspace/qclojure-braket)
 [![cljdoc badge](https://cljdoc.org/badge/org.soulspace/qclojure-braket)](https://cljdoc.org/d/org.soulspace/qclojure-braket)
@@ -61,7 +61,7 @@ The enhanced Braket backend includes:
 
 ## Documentation
 
-📚 **[Complete Documentation](doc/)** - Setup guides, tutorials, and device information
+📚 **[Documentation](doc/)** - Setup guides, tutorials, and device information
 
 ### Quick Links
 - 🚀 **[Getting Started](doc/README.md)** - Overview and setup sequence
@@ -71,7 +71,7 @@ The enhanced Braket backend includes:
 - 📖 **[Tutorial](doc/BRAKET_TUTORIAL.md)** - Step-by-step learning guide
 - ⚙️ **[Terraform Setup](terraform/)** - Infrastructure as code
 
-See [examples/enhanced_braket_usage.clj](examples/enhanced_braket_usage.clj) for code examples.
+See [examples/enhanced_braket_usage.clj](examples/braket_usage.clj) for code examples.
 
 ## Copyright
 © 2025 Ludger Solbach
