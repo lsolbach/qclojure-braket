@@ -1,0 +1,11 @@
+; configuration for cljdoc
+{:cljdoc.doc/tree
+ [["Readme" {:file "README.md"}]
+  ["Changes" {:file "Changelog.md"}]
+  ["Usage Docs" {:file "doc/README.md"}]
+  ["AWS credentials" {:file "doc/AWS_CREDENTIALS.md"}]
+  ["S3 Setup" {:file "doc/S3_SETUP.md"}]
+  ["Braket Devices" {:file "doc/BRAKET_DEVICES.md"}]
+  ["Braket Tutorial" {:file "doc/BRAKET_TUTORIAL.md"}]]
+ ;
+ }
