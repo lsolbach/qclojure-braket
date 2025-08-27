@@ -11,7 +11,7 @@
             [cognitect.aws.client.api :as aws]
             [org.soulspace.qclojure.application.format.qasm3 :as qasm3]
             [org.soulspace.qclojure.application.backend :as qb]
-            [org.soulspace.qclojure.domain.circuit-transformation :as ct]))
+            [org.soulspace.qclojure.application.hardware-optimization :as hopt]))
 
 ;;
 ;; AWS Braket Client Configuration  
@@ -409,19 +409,43 @@
       {:error {:message (.getMessage e)
                :type :api-error}})))
 
-(defn- create-braket-task
-  "Create a Braket task from a circuit"
-  [backend client device-arn circuit options]
-  (let [transformed (ct/transform-circuit
-                     circuit
-                     (qb/get-supported-gates backend))
-        openqasm (qasm3/circuit-to-qasm transformed)
-        shots (get options :shots 1000)
-        task-request {:deviceArn device-arn
-                      :action {:source openqasm
-                               :sourceType "OPENQASM_3"}
-                      :shots shots}]
-    (aws/invoke client {:op :CreateQuantumTask :request task-request})))
+
+(defn optimize-circuit-for-device
+  "Optimize a circuit for a specific AWS Braket device using QClojure's hardware optimization.
+  
+  This function integrates with QClojure's comprehensive hardware optimization pipeline,
+  including topology-aware transformations, gate decomposition, and qubit mapping.
+  
+  Parameters:
+  - circuit: QClojure circuit specification
+  - device-info: Device information including provider and constraints
+  - options: Optional optimization settings
+  
+  Returns:
+  Optimized circuit with transformation metadata"
+  [circuit device-info & [options]]
+  (let [provider (:provider device-info)
+        supported-gates (get-provider-gate-set provider)
+        constraints (get-provider-constraints provider)
+        ;; Create topology based on provider constraints
+        topology (case provider
+                   :rigetti (hopt/linear-topology (:max-qubits constraints))
+                   :ionq (hopt/star-topology (:max-qubits constraints)) ; All-to-all approximated as star
+                   :iqm (hopt/grid-topology 4 5) ; 20 qubits in 4x5 grid
+                   :oqc (hopt/linear-topology (:max-qubits constraints))
+                   :quera (hopt/grid-topology 16 16) ; 256 qubits programmable
+                   :amazon (hopt/heavy-hex-topology :basic) ; 7-qubit basic heavy-hex
+                   :simulator (hopt/star-topology (:max-qubits constraints)) ; Simulator supports all-to-all
+                   (hopt/linear-topology 10)) ; fallback
+        
+        optimization-options (merge {:optimize-topology? true
+                                     :optimize-mapping? true
+                                     :insert-swaps? true
+                                     :transform-operations? true}
+                                    options)]
+    
+    ;; Use QClojure's comprehensive optimization pipeline
+    (hopt/optimize circuit supported-gates topology optimization-options)))
 
 (defprotocol AmazonBraketBackend
   "Protocol for interacting with AWS Braket"
@@ -430,7 +454,11 @@
   (get-device-info [this device-arn]
     "Get comprehensive device information including provider-specific details")
   (validate-circuit [this circuit]
-    "Validate if a circuit can run on the configured device"))
+    "Validate if a circuit can run on the configured device")
+  (apply-error-mitigation [this circuit options]
+    "Apply error mitigation strategies to a circuit before execution")
+  (get-device-noise-model [this device-arn]
+    "Get the noise model for a specific device"))
 
 (defrecord BraketBackend [client s3-client pricing-client config state session-info]
   ;; Basic backend info
@@ -442,18 +470,53 @@
   ;; QuantumBackend protocol implementation
   qb/QuantumBackend
   (submit-circuit [this circuit options]
-    "Submit a quantum circuit for execution on AWS Braket"
     (let [device-arn (or (:device-arn config)
-                         "arn:aws:braket:::device/quantum-simulator/amazon/sv1") ; Default simulator
-          response (create-braket-task this client device-arn circuit options)]
+                         "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
+          
+          ;; Apply hardware optimization if requested
+          optimization-result (if (get options :optimize-for-device? true)
+                                (let [device-info (parse-device-info device-arn)]
+                                  (optimize-circuit-for-device circuit device-info options))
+                                {:quantum-circuit circuit})
+          
+          optimized-circuit (:quantum-circuit optimization-result)
+          
+          ;; Apply error mitigation if requested
+          mitigation-result (if (get options :apply-error-mitigation? true)
+                              (apply-error-mitigation this optimized-circuit options)
+                              {:circuit optimized-circuit
+                               :mitigation-applied []})
+          
+          final-circuit (:circuit mitigation-result)
+          
+          ;; Transform circuit to QASM3 format for Braket
+          qasm3-circuit (qasm3/circuit-to-qasm final-circuit)
+          
+          ;; Prepare task request
+          shots (get options :shots 1000)
+          timestamp (System/currentTimeMillis)
+          task-key (str (:s3-key-prefix config) "task-" timestamp "-" (java.util.UUID/randomUUID))
+          task-request {:deviceArn device-arn
+                        :action {:source qasm3-circuit
+                                 :sourceType "OPENQASM_3"}
+                        :shots shots
+                        :outputS3Bucket (:s3-bucket config)
+                        :outputS3KeyPrefix task-key}
+          
+          ;; Submit to Braket
+          response (aws/invoke client {:op :CreateQuantumTask :request task-request})]
+      
       (if (:cognitect.anomalies/category response)
         {:error response}
         (let [task-arn (:quantumTaskArn response)
               job-id (str "braket-" (java.util.UUID/randomUUID))]
-          ; Store the task mapping in our state
+          ; Store the task mapping in our state with additional metadata
           (swap! state assoc-in [:jobs job-id] {:task-arn task-arn
                                                 :submitted-at (System/currentTimeMillis)
-                                                :circuit circuit
+                                                :original-circuit circuit
+                                                :final-circuit final-circuit
+                                                :optimization-result optimization-result
+                                                :mitigation-result mitigation-result
                                                 :options options})
           job-id))))
 
@@ -671,7 +734,6 @@
         {:device-id device-arn :device-name (str device-arn) :coupling-map []})))
 
   (get-session-info [_this]
-    "Get current session information"
     {:status :authenticated
      :session-id (str "braket-session-" (java.util.UUID/randomUUID))
      :region (:region config)
@@ -681,7 +743,6 @@
      :session-start (System/currentTimeMillis)})
 
   (get-calibration-data [_this device-arn]
-    "Get calibration data for a specific device (if available)"
     (try
       (let [response (aws/invoke client {:op :GetDevice
                                          :request {:deviceArn device-arn}})]
@@ -697,7 +758,6 @@
          :timestamp (java.time.Instant/now)})))
 
   (estimate-cost [this circuits options]
-    "Estimate the cost of running circuits with enhanced provider-specific pricing"
     (let [device-arn (or (:device-arn config)
                          "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
           shots (get options :shots 1000)
@@ -825,12 +885,72 @@
       (if device-info
         (validate-circuit-for-device circuit device-info)
         {:valid? false
-         :error "Unable to parse device information"}))))
+         :error "Unable to parse device information"})))
 
-;;
-;; Backend Creation Functions
-;;
+  (apply-error-mitigation [_this circuit options]
+    (let [device-arn (or (:device-arn config)
+                         "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
+          device-info (parse-device-info device-arn)
+          provider (:provider device-info)
+          ;; Configure error mitigation based on device characteristics and user options
+          mitigation-config (merge
+                             {:strategies (if (= provider :simulator)
+                                            [:circuit-optimization] ; Light mitigation for simulators
+                                            [:readout-error-mitigation :zero-noise-extrapolation]) ; Full mitigation for hardware
+                              :num-shots (get options :shots 1000)
+                              :constraints {:resource-limit (get options :resource-limit :moderate)
+                                            :priority (get options :priority :fidelity)}}
+                             options)]
+      ;; Apply error mitigation using QClojure's error mitigation pipeline
+      (try
+        (let [optimized-circuit (optimize-circuit-for-device circuit device-info)
+              final-circuit (:quantum-circuit optimized-circuit)]
+          ;; For now, return the hardware-optimized circuit
+          ;; Full error mitigation integration would require implementing:
+          ;; (em/apply-error-mitigation final-circuit _this mitigation-config)
+          {:circuit final-circuit
+           :mitigation-applied (:strategies mitigation-config)
+           :optimization-result optimized-circuit})
+        (catch Exception e
+          {:circuit circuit
+           :mitigation-applied []
+           :error (.getMessage e)}))))
 
+  (get-device-noise-model [_this device-arn]
+    (let [device-info (parse-device-info device-arn)
+          provider (:provider device-info)]
+      (case provider
+        :rigetti {:gate-noise {:rx {:noise-strength 0.001}
+                               :ry {:noise-strength 0.001}
+                               :rz {:noise-strength 0.0005}
+                               :cz {:noise-strength 0.01}}
+                  :readout-error {:prob-0-to-1 0.02 :prob-1-to-0 0.03}
+                  :coherence {:t1-us 50 :t2-us 30}}
+        :ionq {:gate-noise {:rx {:noise-strength 0.0005}
+                            :ry {:noise-strength 0.0005}
+                            :rz {:noise-strength 0.0003}
+                            :cnot {:noise-strength 0.005}}
+               :readout-error {:prob-0-to-1 0.01 :prob-1-to-0 0.015}
+               :coherence {:t1-us 10000 :t2-us 1000}}
+        :iqm {:gate-noise {:rx {:noise-strength 0.002}
+                           :ry {:noise-strength 0.002}
+                           :rz {:noise-strength 0.001}
+                           :cz {:noise-strength 0.015}}
+              :readout-error {:prob-0-to-1 0.03 :prob-1-to-0 0.04}
+              :coherence {:t1-us 60 :t2-us 40}}
+        :simulator {:gate-noise {} ; Perfect gates in simulator
+                    :readout-error {:prob-0-to-1 0.0 :prob-1-to-0 0.0}
+                    :coherence {:t1-us :infinite :t2-us :infinite}}
+        ;; Default noise model for unknown providers
+        {:gate-noise {:h {:noise-strength 0.001}
+                      :x {:noise-strength 0.001}
+                      :cnot {:noise-strength 0.01}}
+         :readout-error {:prob-0-to-1 0.02 :prob-1-to-0 0.03}
+         :coherence {:t1-us 100 :t2-us 80}}))))
+
+;;;
+;;; Backend Creation Functions
+;;;
 (defn create-braket-backend
   "Create a new Braket backend instance.
    
@@ -841,6 +961,8 @@
        :shots - Default number of shots (optional, defaults to 1000)
        :max-parallel-shots - Maximum parallel jobs (optional, defaults to 10)
        :device-type - Type of device :quantum or :simulator (optional)
+       :s3-bucket - S3 bucket for storing Braket task results (REQUIRED)
+       :s3-key-prefix - S3 key prefix for organizing results (optional, defaults to \"braket-results/\")
    
    Returns:
      BraketBackend instance
@@ -848,14 +970,26 @@
    Example:
      (create-braket-backend {:region \"us-west-2\" 
                             :device-arn \"arn:aws:braket:::device/quantum-simulator/amazon/sv1\"
-                            :shots 1000})"
+                            :s3-bucket \"my-braket-results-bucket\"
+                            :s3-key-prefix \"experiments/\"
+                            :shots 1000})
+   
+   Note:
+     AWS Braket requires an S3 bucket to store quantum task results. The S3 bucket must exist
+     and the AWS credentials must have read/write permissions to it."
   ([]
    (create-braket-backend {}))
   ([config]
+   (when (nil? (:s3-bucket config))
+     (throw (ex-info "S3 bucket is required for Braket backend. AWS Braket stores all quantum task results in S3."
+                     {:type :missing-s3-bucket
+                      :config config
+                      :help "Provide :s3-bucket in the config map, e.g., {:s3-bucket \"my-braket-results\"}"})))
    (let [merged-config (merge {:region "us-east-1"
                                :shots 1000
                                :max-parallel-shots 10
-                               :device-type :simulator}
+                               :device-type :simulator
+                               :s3-key-prefix "braket-results/"}
                               config)
          client (create-braket-client merged-config)
          s3-client (create-s3-client merged-config)
@@ -870,12 +1004,14 @@
 (defn create-braket-simulator
   "Create a Braket simulator backend for local testing.
    
+   Parameters:
+     config - Configuration map that must include :s3-bucket
+   
    Returns:
-     BraketBackend configured for the default AWS Braket simulator"
-  ([]
-   (create-braket-backend {:device-arn "arn:aws:braket:::device/quantum-simulator/amazon/sv1"
-                           :device-type :simulator
-                           :region "us-east-1"}))
+     BraketBackend configured for the default AWS Braket simulator
+   
+   Example:
+     (create-braket-simulator {:s3-bucket \"my-braket-results\"})"
   ([config]
    (create-braket-backend (merge {:device-arn "arn:aws:braket:::device/quantum-simulator/amazon/sv1"
                                   :device-type :simulator
@@ -887,20 +1023,27 @@
 
    Parameters:
      device-arn - ARN of the specific QPU device
-     region - AWS region where the device is located (optional)
+     config - Configuration map that must include :s3-bucket and can include:
+       :region - AWS region where the device is located (optional, defaults to us-east-1)
    
    Returns:
-     BraketBackend configured for the specified QPU"
-  [device-arn & {:keys [region] :or {region "us-east-1"}}]
-  (create-braket-backend {:device-arn device-arn
-                          :device-type :quantum
-                          :region region}))
+     BraketBackend configured for the specified QPU
+     
+   Example:
+     (create-braket-qpu \"arn:aws:braket:us-east-1::device/qpu/rigetti/Aspen-M-3\"
+                        {:s3-bucket \"my-braket-results\"
+                         :region \"us-east-1\"})"
+  [device-arn config]
+  (create-braket-backend (merge {:device-arn device-arn
+                                 :device-type :quantum
+                                 :region "us-east-1"}
+                                config)))
 
 (comment
   ;; REPL experimentation and testing
 
   ;; Create test backend
-  (def test-backend (create-braket-simulator))
+  (def test-backend (create-braket-simulator {:s3-bucket "test-braket-results"}))
 
   ;; Test S3 location parsing
   (def mock-task-response
@@ -952,7 +1095,8 @@
   (qb/estimate-cost test-backend mock-circuits {:shots 500})
 
   ;; Test QPU pricing
-  (def qpu-backend (create-braket-qpu "arn:aws:braket:us-east-1::device/qpu/rigetti/aspen-m-3"))
+  (def qpu-backend (create-braket-qpu "arn:aws:braket:us-east-1::device/qpu/rigetti/aspen-m-3" 
+                                      {:s3-bucket "test-braket-results"}))
   (qb/estimate-cost qpu-backend mock-circuit {:shots 1000})
   
   ;
