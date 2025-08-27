@@ -1,5 +1,5 @@
 (defproject org.soulspace/qclojure-braket "0.1.0"
-  :description "A Amazon Braket Backend for QClojure."
+  :description "Provides an Amazon Braket Backend for QClojure."
   :license {:name "Eclipse Public License 1.0"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :dependencies [[org.clojure/clojure         "1.12.1"]
