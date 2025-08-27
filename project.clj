@@ -1,5 +1,7 @@
-(defproject org.soulspace/qclojure-braket "0.1.0-SNAPSHOT"
-  :description "A Clojure Backend for Amazon Braket"
+(defproject org.soulspace/qclojure-braket "0.1.0"
+  :description "A Amazon Braket Clojure Backend for "
+  :license {:name "Eclipse Public License 1.0"
+            :url "http://www.eclipse.org/legal/epl-v10.html"}
   :dependencies [[org.clojure/clojure         "1.12.1"]
                  [com.cognitect.aws/api       "0.8.762"]
                  [com.cognitect.aws/endpoints "871.2.32.15"]
