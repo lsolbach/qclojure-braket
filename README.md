@@ -4,12 +4,13 @@ QClojure Braket contains a backend to run [QClojure](https://img.shields.io/gith
 It provides access to the simulators and to quantum hardware (QPUs)
 supported by Amazon Braket.
 
-⚠️ **Important**: AWS Braket requires an S3 bucket to store quantum task results. See [S3 SETUP](doc/S3_SETUP.md) for configuration details.
-
 Disclaimers:
-* using Amazon Braket costs [money](https://aws.amazon.com/braket/pricing/) even for using simulators
+* *experimental/alpha*
+  * the braket backend implementation is *yet* untested against AWS
+* Using Amazon Braket costs [money](https://aws.amazon.com/braket/pricing/) even for using simulators
   * use the simulators provided by QClojure for experimentation first
-* the braket backend implementation is *yet* untested against AWS
+
+⚠️ **Important**: AWS Braket requires an S3 bucket to store quantum task results. See [S3 SETUP](doc/S3_SETUP.md) for configuration details.
 
 [![Clojars Project](https://img.shields.io/clojars/v/org.soulspace/qclojure-braket.svg)](https://clojars.org/org.soulspace/qclojure-braket)
 [![cljdoc badge](https://cljdoc.org/badge/org.soulspace/qclojure-braket)](https://cljdoc.org/d/org.soulspace/qclojure-braket)
