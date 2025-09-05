@@ -1,5 +1,10 @@
 # Changelog
 
+## Version (NEXT)
+* updated dependencies
+* registered project with `zenodo.org` for DOI generation
+  * makes qclojure-braket releases citeable in papers
+
 ## Version 0.1.0
 * added QClojure backend for Amazon Braket
 * added a terraform module to create an S3 bucket and setup the roles
