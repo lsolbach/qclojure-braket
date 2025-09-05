@@ -1,15 +1,15 @@
 (defproject org.soulspace/qclojure-braket "0.1.0"
-  :description "Provides an Amazon Braket Backend for QClojure."
+  :description "Provides an Amazon Braket Backend for QClojure"
   :license {:name "Eclipse Public License 1.0"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
-  :dependencies [[org.clojure/clojure         "1.12.1"]
-                 [com.cognitect.aws/api       "0.8.762"]
-                 [com.cognitect.aws/endpoints "871.2.32.15"]
+  :dependencies [[org.clojure/clojure         "1.12.2"]
+                 [com.cognitect.aws/api       "0.8.774"]
+                 [com.cognitect.aws/endpoints "871.2.33.0"]
                  [com.cognitect.aws/s3        "871.2.32.2"]
-                 [com.cognitect.aws/braket    "871.2.29.35"]
+                 [com.cognitect.aws/braket    "871.2.32.25"]
                  [com.cognitect.aws/pricing   "871.2.32.2"]
                  [com.cognitect.aws/iam       "871.2.32.2"]
-                 [org.soulspace/qclojure      "0.12.0"]]
+                 [org.soulspace/qclojure      "0.14.0"]]
 
   :scm {:name "git" :url "https://github.com/lsolbach/qclojure-braket"}
   :deploy-repositories [["clojars" {:sign-releases false :url "https://clojars.org/repo"}]])
