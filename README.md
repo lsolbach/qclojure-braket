@@ -15,6 +15,7 @@ Disclaimers:
 [![Clojars Project](https://img.shields.io/clojars/v/org.soulspace/qclojure-braket.svg)](https://clojars.org/org.soulspace/qclojure-braket)
 [![cljdoc badge](https://cljdoc.org/badge/org.soulspace/qclojure-braket)](https://cljdoc.org/d/org.soulspace/qclojure-braket)
 ![GitHub](https://img.shields.io/github/license/lsolbach/qclojure-braket)
+[![DOI](https://zenodo.org/badge/996627430.svg)](https://doi.org/10.5281/zenodo.17059604)
 
 ## Usage
 The qclojure-braket provides an Amazon Braket backend for QClojure
