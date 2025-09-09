@@ -1,7 +1,8 @@
 # Changelog
 
-## Version (NEXT)
+## Version 0.2.0
 * updated dependencies
+* refactored to use topology namespace and coupling functions
 * registered project with `zenodo.org` for DOI generation
   * makes qclojure-braket releases citeable in papers
 
