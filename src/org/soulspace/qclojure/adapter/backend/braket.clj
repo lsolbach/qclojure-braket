@@ -11,6 +11,7 @@
             [cognitect.aws.client.api :as aws]
             [org.soulspace.qclojure.application.format.qasm3 :as qasm3]
             [org.soulspace.qclojure.application.backend :as qb]
+            [org.soulspace.qclojure.application.topology :as topo]
             [org.soulspace.qclojure.application.hardware-optimization :as hopt]))
 
 ;;
@@ -429,14 +430,14 @@
         constraints (get-provider-constraints provider)
         ;; Create topology based on provider constraints
         topology (case provider
-                   :rigetti (hopt/linear-topology (:max-qubits constraints))
-                   :ionq (hopt/star-topology (:max-qubits constraints)) ; All-to-all approximated as star
-                   :iqm (hopt/grid-topology 4 5) ; 20 qubits in 4x5 grid
-                   :oqc (hopt/linear-topology (:max-qubits constraints))
-                   :quera (hopt/grid-topology 16 16) ; 256 qubits programmable
-                   :amazon (hopt/heavy-hex-topology :basic) ; 7-qubit basic heavy-hex
-                   :simulator (hopt/star-topology (:max-qubits constraints)) ; Simulator supports all-to-all
-                   (hopt/linear-topology 10)) ; fallback
+                   :rigetti (topo/linear-coupling (:max-qubits constraints))
+                   :ionq (topo/star-coupling (:max-qubits constraints)) ; All-to-all approximated as star
+                   :iqm (topo/grid-coupling 4 5) ; 20 qubits in 4x5 grid
+                   :oqc (topo/linear-coupling (:max-qubits constraints))
+                   :quera (topo/grid-coupling 16 16) ; 256 qubits programmable
+                   :amazon (topo/heavy-hex-coupling 7) ; 7-qubit basic heavy-hex
+                   :simulator (topo/star-coupling (:max-qubits constraints)) ; Simulator supports all-to-all
+                   (topo/linear-coupling 10)) ; fallback
         
         optimization-options (merge {:optimize-topology? true
                                      :optimize-mapping? true
