@@ -388,10 +388,7 @@
   (device [_this] (:current-device @backend-state))
 
   (submit-circuit [_this circuit options]
-    (let [device-arn (or (:device-arn config)
-                         "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
-
-          device (:current-device @backend-state)
+    (let [device (:current-device @backend-state)
 
           ;; Apply hardware optimization if requested
           optimization-result (hwopt/optimize circuit device options)
@@ -405,7 +402,7 @@
           shots (get options :shots 1000)
           timestamp (System/currentTimeMillis)
           task-key (str (:s3-key-prefix config) "task-" timestamp "-" (java.util.UUID/randomUUID))
-          task-request {:deviceArn device-arn
+          task-request {:deviceArn (:id device)
                         :action {:source qasm3-circuit
                                  :sourceType "OPENQASM_3"}
                         :shots shots
