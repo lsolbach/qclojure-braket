@@ -1,5 +1,12 @@
 # Changelog
 
+## Version (NEXT)
+* updated to QClojure 0.16.0
+* updated AWS API versions
+* incorporated backend protocol changes
+* implemented MultiDeviceBackend protocol
+* removed obsolete code
+
 ## Version 0.2.0
 * updated dependencies
 * refactored to use topology namespace and coupling functions

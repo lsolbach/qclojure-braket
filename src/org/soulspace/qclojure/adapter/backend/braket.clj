@@ -9,14 +9,42 @@
             [clojure.set :as set]
             [clojure.data.json :as json]
             [cognitect.aws.client.api :as aws]
+            [org.soulspace.qclojure.domain.topology :as topo]
             [org.soulspace.qclojure.application.format.qasm3 :as qasm3]
-            [org.soulspace.qclojure.application.backend :as qb]
-            [org.soulspace.qclojure.application.topology :as topo]
-            [org.soulspace.qclojure.application.hardware-optimization :as hopt]))
+            [org.soulspace.qclojure.application.backend :as backend]
+            [org.soulspace.qclojure.application.hardware-optimization :as hwopt]))
 
-;;
-;; AWS Braket Client Configuration  
-;;
+;;;
+;;; Specs for Data Validation
+;;;
+(s/def ::device-arn string?)
+(s/def ::region string?)
+(s/def ::max-parallel-shots pos-int?)
+(s/def ::device-type #{:quantum :simulator})
+
+(s/def ::backend-config
+  (s/keys :opt-un [::device-arn
+                   ::region
+                   ::device-type]))
+
+;; S3 and result specs
+(s/def ::bucket string?)
+(s/def ::key string?)
+(s/def ::s3-location
+  (s/keys :req-un [::bucket]
+          :opt-un [::key]))
+
+;; Pricing specs
+(s/def ::price-per-task (s/double-in 0.0 1000.0))
+(s/def ::price-per-shot (s/double-in 0.0 1.0))
+(s/def ::currency string?)
+(s/def ::pricing-data
+  (s/keys :req-un [::price-per-task ::price-per-shot ::currency]
+          :opt-un [::last-updated ::device-type]))
+
+;;;
+;;; AWS Braket Client Configuration  
+;;;
 (def ^:private default-braket-config
   "Default configuration for AWS Braket client"
   {:api :braket
@@ -80,50 +108,40 @@
    (let [config (merge default-pricing-config config-overrides)]
      (aws/client config))))
 
-;;
-;; Specs for Data Validation
-;;
-(s/def ::device-arn string?)
-(s/def ::region string?)
-(s/def ::shots pos-int?)
-(s/def ::max-parallel-shots pos-int?)
-(s/def ::device-type #{:quantum :simulator})
+;;;
+;;; Multi-QPU Device Management Functions
+;;;
 
-(s/def ::backend-config
-  (s/keys :opt-un [::device-arn
-                   ::region
-                   ::shots
-                   ::max-parallel-shots
-                   ::device-type]))
+;; Pricing multipliers by provider (relative to base cost)
+(def ^:private provider-pricing-multipliers
+  "Cost multipliers for different QPU providers"
+  {:rigetti 1.2   ; Superconducting QPUs
+   :ionq 1.5      ; Trapped ion systems
+   :iqm 1.1       ; European superconducting 
+   :oqc 2.0       ; Photonic systems (premium)
+   :quera 0.8     ; Neutral atom (experimental pricing)
+   :amazon 1.0    ; Amazon's own devices
+   :simulator 0.1 ; Simulators are much cheaper
+   :default 1.0})
 
-(s/def ::circuit-definition map?) ; We'll refine this based on QClojure's circuit format
+(defn- parse-device-info
+  "Parse device information from AWS Braket device ARN"
+  [device-arn]
+  (when device-arn
+    (let [arn-parts (str/split device-arn #":")
+          device-path (last arn-parts)
+          path-parts (str/split device-path #"/")]
+      (when (>= (count path-parts) 4)
+        (let [[device-type provider device-name] (drop 1 path-parts)]
+          {:device-type (keyword device-type)
+           :provider (keyword provider)
+           :device-name device-name
+           :arn device-arn})))))
 
-;; S3 and result specs
-(s/def ::bucket string?)
-(s/def ::key string?)
-(s/def ::s3-location
-  (s/keys :req-un [::bucket]
-          :opt-un [::key]))
-
-(s/def ::measurement-outcome (s/coll-of (s/int-in 0 2)))
-(s/def ::measurements (s/coll-of ::measurement-outcome))
-(s/def ::measurement-counts (s/map-of string? pos-int?))
-(s/def ::probabilities (s/map-of string? (s/double-in 0.0 1.0)))
-
-(s/def ::task-result
-  (s/keys :opt-un [::measurements
-                   ::measurement-counts
-                   ::probabilities
-                   ::task-metadata
-                   ::s3-location]))
-
-;; Pricing specs
-(s/def ::price-per-task (s/double-in 0.0 1000.0))
-(s/def ::price-per-shot (s/double-in 0.0 1.0))
-(s/def ::currency string?)
-(s/def ::pricing-data
-  (s/keys :req-un [::price-per-task ::price-per-shot ::currency]
-          :opt-un [::last-updated ::device-type]))
+(defn- provider-pricing-multiplier
+  "Get pricing multiplier for a specific provider"
+  [provider]
+  (get provider-pricing-multipliers provider (:default provider-pricing-multipliers)))
 
 ;;
 ;; AWS Pricing Functions
@@ -184,7 +202,7 @@
       {:error {:message (.getMessage e)
                :type :pricing-parse-error}})))
 
-(defn- get-braket-pricing
+(defn- braket-pricing
   "Get cached or fresh pricing data for Braket services"
   [backend device-type region]
   (let [cache-key (str device-type "-" region)
@@ -295,110 +313,42 @@
     {:error {:message "No S3 output location found in task response"
              :type :missing-s3-location}}))
 
-;;
-;; Multi-QPU Device Management Functions
-;;
+;;;
+;;; Backend State Management
+;;;
+(defonce backend-state
+  (atom {:job-counter 0
+         :active-jobs {}
+         :devices []
+         :current-device nil}))
 
-;; Provider-specific gate sets based on real AWS Braket QPU capabilities  
-(def ^:private provider-gate-sets
-  "Native gate sets supported by different QPU providers on AWS Braket"
-  {:rigetti #{:rx :ry :rz :cz :xy :measure}  ; Rigetti Aspen series superconducting
-   :ionq #{:rx :ry :rz :cnot :swap :h :x :y :z :s :t :measure} ; IonQ trapped ion
-   :iqm #{:rx :ry :rz :cz :measure} ; IQM superconducting 
-   :oqc #{:rx :ry :rz :ecr :measure} ; OQC photonic (ECR = echoed cross-resonance)
-   :quera #{:rydberg-blockade :rydberg-phase :measure} ; QuEra neutral atom
-   :amazon #{:rx :ry :rz :cnot :ccnot :swap :h :x :y :z :s :t :measure} ; Amazon Braket devices
-   :simulator #{:rx :ry :rz :cnot :ccnot :cz :swap :h :x :y :z :s :t :phase :u1 :u2 :u3 :measure}})
+;;;
+;;; Device Management Helpers
+;;;
 
-;; Provider-specific hardware constraints
-(def ^:private provider-constraints
-  "Hardware constraints for different QPU providers"
-  {:rigetti {:max-qubits 80 :max-shots 100000 :native-connectivity :limited :coherence-time-us 50}
-   :ionq {:max-qubits 32 :max-shots 10000 :native-connectivity :all-to-all :coherence-time-us 10000}
-   :iqm {:max-qubits 20 :max-shots 100000 :native-connectivity :limited :coherence-time-us 60}
-   :oqc {:max-qubits 8 :max-shots 100000 :native-connectivity :limited :coherence-time-us 5}
-   :quera {:max-qubits 256 :max-shots 1000 :native-connectivity :programmable :coherence-time-us 1000}
-   :amazon {:max-qubits 34 :max-shots 100000 :native-connectivity :all-to-all :coherence-time-us 100}
-   :simulator {:max-qubits 40 :max-shots 100000 :native-connectivity :all-to-all :coherence-time-us :unlimited}})
-
-;; Pricing multipliers by provider (relative to base cost)
-(def ^:private provider-pricing-multipliers
-  "Cost multipliers for different QPU providers"
-  {:rigetti 1.2   ; Superconducting QPUs
-   :ionq 1.5      ; Trapped ion systems
-   :iqm 1.1       ; European superconducting 
-   :oqc 2.0       ; Photonic systems (premium)
-   :quera 0.8     ; Neutral atom (experimental pricing)
-   :amazon 1.0    ; Amazon's own devices
-   :simulator 0.1 ; Simulators are much cheaper
-   :default 1.0})
-
-(defn- parse-device-info
-  "Parse device information from AWS Braket device ARN"
-  [device-arn]
-  (when device-arn
-    (let [arn-parts (str/split device-arn #":")
-          device-path (last arn-parts)
-          path-parts (str/split device-path #"/")]
-      (when (>= (count path-parts) 4)
-        (let [[device-type provider device-name] (drop 1 path-parts)]
-          {:device-type (keyword device-type)
-           :provider (keyword provider)
-           :device-name device-name
-           :arn device-arn})))))
-
-(defn- get-provider-gate-set
-  "Get the native gate set for a specific provider"
-  [provider]
-  (get provider-gate-sets provider (:simulator provider-gate-sets)))
-
-(defn- get-provider-constraints
-  "Get hardware constraints for a specific provider"
-  [provider]
-  (get provider-constraints provider (:simulator provider-constraints)))
-
-(defn- get-provider-pricing-multiplier
-  "Get pricing multiplier for a specific provider"
-  [provider]
-  (get provider-pricing-multipliers provider (:default provider-pricing-multipliers)))
-
-(defn- validate-circuit-for-device
-  "Validate if a circuit can run on a specific device"
-  [circuit device-info]
-  (let [provider (:provider device-info)
-        constraints (get-provider-constraints provider)
-        supported-gates (get-provider-gate-set provider)
-        circuit-gates (set (keys (:gates circuit)))
-        qubit-count (:qubit-count circuit 0)
-        unsupported-gates (set/difference circuit-gates supported-gates)]
-
-    {:valid? (and (<= qubit-count (:max-qubits constraints))
-                  (empty? unsupported-gates))
-     :qubit-count qubit-count
-     :max-qubits (:max-qubits constraints)
-     :qubit-constraint-ok? (<= qubit-count (:max-qubits constraints))
-     :unsupported-gates unsupported-gates
-     :gate-constraint-ok? (empty? unsupported-gates)
-     :connectivity (:native-connectivity constraints)
-     :constraints constraints}))
+; TODO use function from backend with qcloure 0.17.0 
+(defn device-entry
+  "Create a map of device ID to device map entry."
+  [device]
+  [(:id device) device])
 
 (defn- cache-devices!
   "Cache the list of available devices for 5 minutes to avoid excessive API calls"
-  [backend devices]
-  (swap! (:state backend) assoc
-         :devices-cache devices
+  [_backend devices]
+  (swap! backend-state assoc
+         :devices devices
          :last-devices-refresh (System/currentTimeMillis)))
 
-(defn- get-cached-devices
+(defn- cached-devices
   "Get cached devices if still valid (less than 5 minutes old)"
-  [backend]
-  (let [{:keys [devices-cache last-devices-refresh]} @(:state backend)
+  [_backend]
+  (let [{:keys [devices last-devices-refresh]} @backend-state
         cache-age (- (System/currentTimeMillis) (or last-devices-refresh 0))
         cache-valid? (< cache-age (* 5 60 1000))] ; 5 minutes
     (when cache-valid?
-      devices-cache)))
+      devices)))
 
-(defn- list-braket-devices
+(defn- braket-devices
   "Call AWS Braket API to list available devices"
   [client]
   (try
@@ -409,58 +359,9 @@
     (catch Exception e
       {:error {:message (.getMessage e)
                :type :api-error}})))
-
-
-(defn optimize-circuit-for-device
-  "Optimize a circuit for a specific AWS Braket device using QClojure's hardware optimization.
-  
-  This function integrates with QClojure's comprehensive hardware optimization pipeline,
-  including topology-aware transformations, gate decomposition, and qubit mapping.
-  
-  Parameters:
-  - circuit: QClojure circuit specification
-  - device-info: Device information including provider and constraints
-  - options: Optional optimization settings
-  
-  Returns:
-  Optimized circuit with transformation metadata"
-  [circuit device-info & [options]]
-  (let [provider (:provider device-info)
-        supported-gates (get-provider-gate-set provider)
-        constraints (get-provider-constraints provider)
-        ;; Create topology based on provider constraints
-        topology (case provider
-                   :rigetti (topo/linear-coupling (:max-qubits constraints))
-                   :ionq (topo/star-coupling (:max-qubits constraints)) ; All-to-all approximated as star
-                   :iqm (topo/grid-coupling 4 5) ; 20 qubits in 4x5 grid
-                   :oqc (topo/linear-coupling (:max-qubits constraints))
-                   :quera (topo/grid-coupling 16 16) ; 256 qubits programmable
-                   :amazon (topo/heavy-hex-coupling 7) ; 7-qubit basic heavy-hex
-                   :simulator (topo/star-coupling (:max-qubits constraints)) ; Simulator supports all-to-all
-                   (topo/linear-coupling 10)) ; fallback
-        
-        optimization-options (merge {:optimize-topology? true
-                                     :optimize-mapping? true
-                                     :insert-swaps? true
-                                     :transform-operations? true}
-                                    options)]
-    
-    ;; Use QClojure's comprehensive optimization pipeline
-    (hopt/optimize circuit supported-gates topology optimization-options)))
-
-(defprotocol AmazonBraketBackend
-  "Protocol for interacting with AWS Braket"
-  (get-provider-info [this provider]
-    "Get information about a specific QPU provider")
-  (get-device-info [this device-arn]
-    "Get comprehensive device information including provider-specific details")
-  (validate-circuit [this circuit]
-    "Validate if a circuit can run on the configured device")
-  (apply-error-mitigation [this circuit options]
-    "Apply error mitigation strategies to a circuit before execution")
-  (get-device-noise-model [this device-arn]
-    "Get the noise model for a specific device"))
-
+;;;
+;;; BraketBackend Implementation
+;;;
 (defrecord BraketBackend [client s3-client pricing-client config state session-info]
   ;; Basic backend info
   Object
@@ -469,30 +370,37 @@
          ", device=" (get-in config [:device-arn] "default-simulator") "}"))
 
   ;; QuantumBackend protocol implementation
-  qb/QuantumBackend
-  (submit-circuit [this circuit options]
+  backend/QuantumBackend
+  (backend-info [_this]
+    "Get information about this backend instance (conforms to ::backend-info)"
+    {:backend-type :cloud
+     :backend-name "Amazon Braket"
+     :capabilities #{:mult-device :cloud :batch}
+     :backend-config config
+     :provider :aws
+     :region (:region config)
+     :device-arn (:device-arn config)
+     :device-type (:device-type config)
+     :default-shots (:shots config)
+     :max-parallel-shots (:max-parallel-shots config)
+     :created-at (System/currentTimeMillis)})
+
+  (device [_this] (:current-device @backend-state))
+
+  (submit-circuit [_this circuit options]
     (let [device-arn (or (:device-arn config)
                          "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
-          
+
+          device (:current-device @backend-state)
+
           ;; Apply hardware optimization if requested
-          optimization-result (if (get options :optimize-for-device? true)
-                                (let [device-info (parse-device-info device-arn)]
-                                  (optimize-circuit-for-device circuit device-info options))
-                                {:quantum-circuit circuit})
-          
-          optimized-circuit (:quantum-circuit optimization-result)
-          
-          ;; Apply error mitigation if requested
-          mitigation-result (if (get options :apply-error-mitigation? true)
-                              (apply-error-mitigation this optimized-circuit options)
-                              {:circuit optimized-circuit
-                               :mitigation-applied []})
-          
-          final-circuit (:circuit mitigation-result)
-          
+          optimization-result (hwopt/optimize circuit device options)
+
+          optimized-circuit (:circuit optimization-result)
+
           ;; Transform circuit to QASM3 format for Braket
-          qasm3-circuit (qasm3/circuit-to-qasm final-circuit)
-          
+          qasm3-circuit (qasm3/circuit-to-qasm optimized-circuit)
+
           ;; Prepare task request
           shots (get options :shots 1000)
           timestamp (System/currentTimeMillis)
@@ -503,10 +411,10 @@
                         :shots shots
                         :outputS3Bucket (:s3-bucket config)
                         :outputS3KeyPrefix task-key}
-          
+
           ;; Submit to Braket
           response (aws/invoke client {:op :CreateQuantumTask :request task-request})]
-      
+
       (if (:cognitect.anomalies/category response)
         {:error response}
         (let [task-arn (:quantumTaskArn response)
@@ -515,13 +423,11 @@
           (swap! state assoc-in [:jobs job-id] {:task-arn task-arn
                                                 :submitted-at (System/currentTimeMillis)
                                                 :original-circuit circuit
-                                                :final-circuit final-circuit
-                                                :optimization-result optimization-result
-                                                :mitigation-result mitigation-result
+                                                :final-circuit optimized-circuit
                                                 :options options})
           job-id))))
 
-  (get-job-status [_this job-id]
+  (job-status [_this job-id]
     "Get the status of a submitted job (keyword per protocol)"
     (if-let [job-info (get-in @state [:jobs job-id])]
       (let [task-arn (:task-arn job-info)
@@ -539,7 +445,7 @@
             :unknown)))
       :failed))
 
-  (get-job-result [_this job-id]
+  (job-result [_this job-id]
     "Get the results of a completed job (protocol-conformant map)"
     (if-let [job-info (get-in @state [:jobs job-id])]
       (let [task-arn (:task-arn job-info)
@@ -560,15 +466,15 @@
                 (let [meas (:measurements s3-results)
                       ;; Normalize to QClojure's :measurement-results map {"bitstring" count}
                       measurement-results (cond
-                                           (map? meas) meas
-                                           (sequential? meas)
-                                           (->> meas
-                                                (map (fn [bits]
-                                                       (->> bits
-                                                            (map str)
-                                                            (apply str))))
-                                                (frequencies))
-                                           :else {})]
+                                            (map? meas) meas
+                                            (sequential? meas)
+                                            (->> meas
+                                                 (map (fn [bits]
+                                                        (->> bits
+                                                             (map str)
+                                                             (apply str))))
+                                                 (frequencies))
+                                            :else {})]
                   {:job-status :completed
                    :job-id job-id
                    :measurement-results measurement-results
@@ -587,31 +493,7 @@
        :job-id job-id
        :error-message "Job not found"}))
 
-  (get-supported-gates [_this]
-    "Get the gates supported by the current device with enhanced provider-specific logic"
-    (let [device-arn (or (:device-arn config)
-                         "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
-          device-info (parse-device-info device-arn)]
-
-      (if device-info
-        ;; Use provider-specific gate set
-        (get-provider-gate-set (:provider device-info))
-        ;; Fallback to querying the device directly
-        (if (str/includes? device-arn "simulator")
-          ;; Simulators support all standard gates
-          (:simulator provider-gate-sets)
-          ;; For real devices, query device capabilities
-          (try
-            (let [response (aws/invoke client {:op :GetDevice
-                                               :request {:deviceArn device-arn}})]
-              (if (:cognitect.anomalies/category response)
-                #{:h :x :y :z :cnot :measure} ; Fallback gate set
-                (let [native-gates (get-in response [:deviceCapabilities :action :braket.ir.openqasm :supportedOperations])]
-                  (set (map keyword native-gates)))))
-            (catch Exception _e
-              #{:h :x :y :z :cnot :measure}))))))
-
-  (get-queue-status [_this]
+  (queue-status [_this]
     "Get queue status information for the configured device"
     (let [device-arn (or (:device-arn config)
                          "arn:aws:braket:::device/quantum-simulator/amazon/sv1")]
@@ -629,7 +511,7 @@
         (catch Exception e
           {:error {:message (.getMessage e) :type :api-error}}))))
 
-  (is-available? [_this]
+  (available? [_this]
     "Check if the backend is available for job submission"
     (let [device-arn (or (:device-arn config)
                          "arn:aws:braket:::device/quantum-simulator/amazon/sv1")]
@@ -641,22 +523,6 @@
             (= "ONLINE" (:deviceStatus response))))
         (catch Exception _e
           false))))
-
-  (get-backend-info [this]
-    "Get information about this backend instance (conforms to ::backend-info)"
-    {:backend-type :cloud
-     :backend-name "Amazon Braket"
-     :capabilities #{:cloud :batch :cost-estimation :s3-results}
-     :supported-gates (qb/get-supported-gates this)
-     :backend-config config
-     :provider :aws
-     :region (:region config)
-     :device-arn (:device-arn config)
-     :device-type (:device-type config)
-     :default-shots (:shots config)
-     :max-parallel-shots (:max-parallel-shots config)
-     :created-at (System/currentTimeMillis)
-     :version "1.0.0"})
 
   (cancel-job [_this job-id]
     "Cancel a running job"
@@ -674,19 +540,13 @@
             :cannot-cancel)))
       :not-found))
 
-  ;; CloudQuantumBackend protocol implementation  
-  qb/CloudQuantumBackend
-  (authenticate [_this _credentials]
-    "AWS Braket uses AWS credentials, not separate authentication"
-    {:status :authenticated
-     :region (:region config)
-     :authenticated-at (System/currentTimeMillis)})
-
-  (list-available-devices [this]
+  ;; MultiDeviceBackend protocol implementation  
+  backend/MultiDeviceBackend
+  (devices [this]
     "List all available Braket devices (returns collection as per protocol)"
-    (let [raw-devices (if-let [cached (get-cached-devices this)]
+    (let [raw-devices (if-let [cached (cached-devices this)]
                         cached
-                        (let [result (list-braket-devices client)]
+                        (let [result (braket-devices client)]
                           (:devices result)))
           normalized (map (fn [d]
                             {:device-id (:deviceArn d)
@@ -699,42 +559,27 @@
                              :device-type (keyword (str/lower-case (or (:deviceType d) "unknown")))
                              :provider (keyword (or (:providerName d) "aws"))})
                           (or raw-devices []))]
-      (when (and (seq normalized) (nil? (get-cached-devices this)))
+      (when (and (seq normalized) (nil? (cached-devices this)))
         (cache-devices! this normalized))
       normalized))
 
-  ;; Enhanced multi-QPU protocol methods 
-  (get-device-topology [_this device-arn]
-    "Get the connectivity topology of a specific device (protocol-conformant)"
-    (try
-      (let [response (aws/invoke client {:op :GetDevice
-                                         :request {:deviceArn device-arn}})]
-        (if (:cognitect.anomalies/category response)
-          {:device-id device-arn
-           :device-name (str device-arn)
-           :coupling-map []}
-          (let [capabilities (:deviceCapabilities response)
-                device-name (:deviceName response)
-                connectivity (get-in capabilities [:action :braket.ir.openqasm :supportedConnectivity])
-                max-qubits (or (get-in capabilities [:action :braket.ir.openqasm :maxQubits]) 0)
-                coupling-map (cond
-                               (and (sequential? connectivity)
-                                    (every? sequential? connectivity))
-                               (mapv vec connectivity)
-                               (= connectivity "AllToAll")
-                               (vec (for [i (range max-qubits)
-                                          j (range max-qubits)
-                                          :when (not= i j)]
-                                      [i j]))
-                               :else [])]
-            {:device-id device-arn
-             :device-name device-name
-             :coupling-map coupling-map
-             :max-qubits max-qubits})))
-      (catch Exception _e
-        {:device-id device-arn :device-name (str device-arn) :coupling-map []})))
+  (select-device [_this device]
+    (let [device (if (string? device)
+                   (some (fn [d] (when (= (:id d) device) d))
+                         (:devices @backend-state))
+                   device)]
+      (swap! backend-state assoc :current-device device)
+      (:current-device @backend-state)))
 
-  (get-session-info [_this]
+  ;; CloudQuantumBackend protocol implementation  
+  backend/CloudQuantumBackend
+  (authenticate [_this _credentials]
+    "AWS Braket uses AWS credentials, not separate authentication"
+    {:status :authenticated
+     :region (:region config)
+     :authenticated-at (System/currentTimeMillis)})
+
+  (session-info [_this]
     {:status :authenticated
      :session-id (str "braket-session-" (java.util.UUID/randomUUID))
      :region (:region config)
@@ -742,21 +587,6 @@
      :active-jobs (count (get-in @state [:jobs]))
      :active-batches (count (get-in @state [:batches]))
      :session-start (System/currentTimeMillis)})
-
-  (get-calibration-data [_this device-arn]
-    (try
-      (let [response (aws/invoke client {:op :GetDevice
-                                         :request {:deviceArn device-arn}})]
-        (if (:cognitect.anomalies/category response)
-          {:device-id device-arn
-           :timestamp (java.time.Instant/now)}
-          {:device-id device-arn
-           :timestamp (java.time.Instant/now)
-           :device-status (:deviceStatus response)
-           :note "Braket API does not expose detailed calibration data"}))
-      (catch Exception _e
-        {:device-id device-arn
-         :timestamp (java.time.Instant/now)})))
 
   (estimate-cost [this circuits options]
     (let [device-arn (or (:device-arn config)
@@ -766,37 +596,69 @@
           total-shots (* circuit-count shots)
           device-type (if (str/includes? device-arn "simulator") :simulator :quantum)
           region (:region config "us-east-1")
-          pricing-data (get-braket-pricing this device-type region)
+          pricing-data (braket-pricing this device-type region)
           base-cost (:price-per-task pricing-data)
           shot-cost (:price-per-shot pricing-data)
           circuit-complexity (get (if (sequential? circuits) (first circuits) circuits) :gate-count 10)
           ;; Enhanced: Apply provider-specific pricing multiplier
           device-info (parse-device-info device-arn)
           provider-multiplier (if device-info
-                                (get-provider-pricing-multiplier (:provider device-info))
+                                (provider-pricing-multiplier (:provider device-info))
                                 1.0)
           adjusted-base-cost (* base-cost provider-multiplier)
           adjusted-shot-cost (* shot-cost provider-multiplier)]
-  {:total-cost (+ (* circuit-count adjusted-base-cost)
-          (* total-shots adjusted-shot-cost))
-   :currency (:currency pricing-data)
-   :cost-breakdown {:base-cost-per-task adjusted-base-cost
-        :shot-cost-per-shot adjusted-shot-cost
-        :total-tasks circuit-count
-        :total-shots total-shots
-        :task-cost (* circuit-count adjusted-base-cost)
-        :shot-cost (* total-shots adjusted-shot-cost)
-        :provider-multiplier provider-multiplier
-        :original-base-cost base-cost
-        :original-shot-cost shot-cost
-        :device-type device-type
-        :provider (get device-info :provider :unknown)
-        :complexity-factor circuit-complexity}
-   ;; legacy fields retained for convenience
-   :estimated-cost-usd (+ (* circuit-count adjusted-base-cost)
-          (* total-shots adjusted-shot-cost))
-   :pricing-source (:source pricing-data)
-   :last-updated (:last-updated pricing-data)}))
+      {:total-cost (+ (* circuit-count adjusted-base-cost)
+                      (* total-shots adjusted-shot-cost))
+       :currency (:currency pricing-data)
+       :cost-breakdown {:base-cost-per-task adjusted-base-cost
+                        :shot-cost-per-shot adjusted-shot-cost
+                        :total-tasks circuit-count
+                        :total-shots total-shots
+                        :task-cost (* circuit-count adjusted-base-cost)
+                        :shot-cost (* total-shots adjusted-shot-cost)
+                        :provider-multiplier provider-multiplier
+                        :original-base-cost base-cost
+                        :original-shot-cost shot-cost
+                        :device-type device-type
+                        :provider (get device-info :provider :unknown)
+                        :complexity-factor circuit-complexity}
+       ;; legacy fields retained for convenience
+       :estimated-cost-usd (+ (* circuit-count adjusted-base-cost)
+                              (* total-shots adjusted-shot-cost))
+       :pricing-source (:source pricing-data)
+       :last-updated (:last-updated pricing-data)}))
+
+  backend/BatchJobBackend
+  (batch-status [this batch-id]
+    "Get status of a batch operation"
+    (if-let [batch-info (get-in @(:state this) [:batches batch-id])]
+      (let [job-statuses (doall (map #(backend/job-status this %) (:job-ids batch-info)))
+            completed (count (filter #(= :completed %) job-statuses))
+            failed (count (filter #(= :failed %) job-statuses))
+            running (count (filter #(#{:running :queued :submitted} %) job-statuses))]
+        {:batch-id batch-id
+         :total-jobs (count (:job-ids batch-info))
+         :completed completed
+         :failed failed
+         :running running
+         :overall-status (cond
+                           (= completed (count job-statuses)) :completed
+                           (> failed 0) :partially-failed
+                           (> running 0) :running
+                           :else :unknown)
+         :job-statuses job-statuses})
+      {:error "Batch not found"}))
+
+  (batch-results [this batch-id]
+    "Get results of a completed batch"
+    (if-let [batch-info (get-in @backend-state [:batches batch-id])]
+      (let [job-ids (:job-ids batch-info)
+            results (map #(backend/job-result this %) job-ids)]
+        {:batch-id batch-id
+         :total-jobs (count job-ids)
+         :results results
+         :completed-at (System/currentTimeMillis)})
+      {:error "Batch not found"}))
 
   (batch-submit [this circuits options]
     "Submit multiple circuits as a batch"
@@ -814,140 +676,21 @@
                                (let [job-options (assoc options :batch-id batch-id
                                                         :chunk-index chunk-index
                                                         :circuit-index i)]
-                                 (qb/submit-circuit this circuit job-options)))
+                                 (backend/submit-circuit this circuit job-options)))
                              chunk))]
             (recur (rest chunks)
                    (concat job-ids chunk-jobs)
                    (inc chunk-index)))
           ; Store batch information
           (do
-            (swap! (:state this) assoc-in [:batches batch-id]
+            (swap! @backend-state assoc-in [:batches batch-id]
                    {:job-ids job-ids
                     :submitted-at (System/currentTimeMillis)
                     :total-circuits (count circuits)
                     :status :submitted})
             {:batch-id batch-id
              :job-ids job-ids
-             :total-circuits (count circuits)})))))
-
-  (get-batch-status [this batch-id]
-    "Get status of a batch operation"
-    (if-let [batch-info (get-in @(:state this) [:batches batch-id])]
-      (let [job-statuses (doall (map #(qb/get-job-status this %) (:job-ids batch-info)))
-            completed (count (filter #(= :completed %) job-statuses))
-            failed (count (filter #(= :failed %) job-statuses))
-            running (count (filter #(#{:running :queued :submitted} %) job-statuses))]
-        {:batch-id batch-id
-         :total-jobs (count (:job-ids batch-info))
-         :completed completed
-         :failed failed
-         :running running
-         :overall-status (cond
-                           (= completed (count job-statuses)) :completed
-                           (> failed 0) :partially-failed
-                           (> running 0) :running
-                           :else :unknown)
-         :job-statuses job-statuses})
-      {:error "Batch not found"}))
-
-  (get-batch-results [this batch-id]
-    "Get results of a completed batch"
-    (if-let [batch-info (get-in @(:state this) [:batches batch-id])]
-      (let [job-ids (:job-ids batch-info)
-            results (map #(qb/get-job-result this %) job-ids)]
-        {:batch-id batch-id
-         :total-jobs (count job-ids)
-         :results results
-         :completed-at (System/currentTimeMillis)})
-      {:error "Batch not found"}))
-
-  AmazonBraketBackend
-  (get-provider-info [_this provider]
-                   "Get information about a specific QPU provider"
-                   {:provider provider
-                    :supported-gates (get-provider-gate-set provider)
-                    :constraints (get-provider-constraints provider)
-                    :pricing-multiplier (get-provider-pricing-multiplier provider)})
-
-  (get-device-info [_this device-arn]
-    "Get comprehensive device information including provider-specific details"
-    (let [device-info (parse-device-info device-arn)
-          provider (:provider device-info)]
-      (merge device-info
-             {:supported-gates (get-provider-gate-set provider)
-              :constraints (get-provider-constraints provider)
-              :pricing-multiplier (get-provider-pricing-multiplier provider)})))
-  
-  (validate-circuit [_this circuit]
-    "Validate if a circuit can run on the configured device"
-    (let [device-arn (or (:device-arn config)
-                         "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
-          device-info (parse-device-info device-arn)]
-      (if device-info
-        (validate-circuit-for-device circuit device-info)
-        {:valid? false
-         :error "Unable to parse device information"})))
-
-  (apply-error-mitigation [_this circuit options]
-    (let [device-arn (or (:device-arn config)
-                         "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
-          device-info (parse-device-info device-arn)
-          provider (:provider device-info)
-          ;; Configure error mitigation based on device characteristics and user options
-          mitigation-config (merge
-                             {:strategies (if (= provider :simulator)
-                                            [:circuit-optimization] ; Light mitigation for simulators
-                                            [:readout-error-mitigation :zero-noise-extrapolation]) ; Full mitigation for hardware
-                              :num-shots (get options :shots 1000)
-                              :constraints {:resource-limit (get options :resource-limit :moderate)
-                                            :priority (get options :priority :fidelity)}}
-                             options)]
-      ;; Apply error mitigation using QClojure's error mitigation pipeline
-      (try
-        (let [optimized-circuit (optimize-circuit-for-device circuit device-info)
-              final-circuit (:quantum-circuit optimized-circuit)]
-          ;; For now, return the hardware-optimized circuit
-          ;; Full error mitigation integration would require implementing:
-          ;; (em/apply-error-mitigation final-circuit _this mitigation-config)
-          {:circuit final-circuit
-           :mitigation-applied (:strategies mitigation-config)
-           :optimization-result optimized-circuit})
-        (catch Exception e
-          {:circuit circuit
-           :mitigation-applied []
-           :error (.getMessage e)}))))
-
-  (get-device-noise-model [_this device-arn]
-    (let [device-info (parse-device-info device-arn)
-          provider (:provider device-info)]
-      (case provider
-        :rigetti {:gate-noise {:rx {:noise-strength 0.001}
-                               :ry {:noise-strength 0.001}
-                               :rz {:noise-strength 0.0005}
-                               :cz {:noise-strength 0.01}}
-                  :readout-error {:prob-0-to-1 0.02 :prob-1-to-0 0.03}
-                  :coherence {:t1-us 50 :t2-us 30}}
-        :ionq {:gate-noise {:rx {:noise-strength 0.0005}
-                            :ry {:noise-strength 0.0005}
-                            :rz {:noise-strength 0.0003}
-                            :cnot {:noise-strength 0.005}}
-               :readout-error {:prob-0-to-1 0.01 :prob-1-to-0 0.015}
-               :coherence {:t1-us 10000 :t2-us 1000}}
-        :iqm {:gate-noise {:rx {:noise-strength 0.002}
-                           :ry {:noise-strength 0.002}
-                           :rz {:noise-strength 0.001}
-                           :cz {:noise-strength 0.015}}
-              :readout-error {:prob-0-to-1 0.03 :prob-1-to-0 0.04}
-              :coherence {:t1-us 60 :t2-us 40}}
-        :simulator {:gate-noise {} ; Perfect gates in simulator
-                    :readout-error {:prob-0-to-1 0.0 :prob-1-to-0 0.0}
-                    :coherence {:t1-us :infinite :t2-us :infinite}}
-        ;; Default noise model for unknown providers
-        {:gate-noise {:h {:noise-strength 0.001}
-                      :x {:noise-strength 0.001}
-                      :cnot {:noise-strength 0.01}}
-         :readout-error {:prob-0-to-1 0.02 :prob-1-to-0 0.03}
-         :coherence {:t1-us 100 :t2-us 80}}))))
+             :total-circuits (count circuits)}))))))
 
 ;;;
 ;;; Backend Creation Functions
@@ -1069,13 +812,10 @@
   (parse-braket-results mock-statevector-json)
 
   ;; Test backend info
-  (qb/get-backend-info test-backend)
+  (backend/backend-info test-backend)
 
   ;; Test device availability check
-  (qb/is-available? test-backend)
-
-  ;; Test supported gates
-  (qb/get-supported-gates test-backend)
+  (backend/available? test-backend)
 
   ;; Test error handling
   (parse-braket-results "invalid json")
@@ -1092,13 +832,13 @@
   (def mock-circuit {:gate-count 10})
   (def mock-circuits [{:gate-count 5} {:gate-count 8} {:gate-count 12}])
 
-  (qb/estimate-cost test-backend mock-circuit {:shots 1000})
-  (qb/estimate-cost test-backend mock-circuits {:shots 500})
+  (backend/estimate-cost test-backend mock-circuit {:shots 1000})
+  (backend/estimate-cost test-backend mock-circuits {:shots 500})
 
   ;; Test QPU pricing
   (def qpu-backend (create-braket-qpu "arn:aws:braket:us-east-1::device/qpu/rigetti/aspen-m-3" 
                                       {:s3-bucket "test-braket-results"}))
-  (qb/estimate-cost qpu-backend mock-circuit {:shots 1000})
+  (backend/estimate-cost qpu-backend mock-circuit {:shots 1000})
   
   ;
   )
