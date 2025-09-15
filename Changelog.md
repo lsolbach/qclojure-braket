@@ -1,7 +1,7 @@
 # Changelog
 
 ## Version (NEXT)
-* updated to QClojure 0.16.0
+* updated QClojure version
 * updated AWS API versions
 * incorporated backend protocol changes
 * implemented MultiDeviceBackend protocol
