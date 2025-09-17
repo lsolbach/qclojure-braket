@@ -9,7 +9,7 @@
                  [com.cognitect.aws/braket    "871.2.32.25"]
                  [com.cognitect.aws/pricing   "871.2.32.2"]
                  [com.cognitect.aws/iam       "871.2.32.2"]
-                 [org.soulspace/qclojure      "0.17.0"]]
+                 [org.soulspace/qclojure      "0.18.0"]]
 
   :scm {:name "git" :url "https://github.com/lsolbach/qclojure-braket"}
   :deploy-repositories [["clojars" {:sign-releases false :url "https://clojars.org/repo"}]])
