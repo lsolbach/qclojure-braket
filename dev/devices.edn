@@ -1,0 +1,50 @@
+[{:device-id "arn:aws:braket:us-east-1::device/qpu/ionq/Aria-1",
+  :device-name "Aria 1",
+  :device-status :offline,
+  :device-type :qpu,
+  :provider "IonQ"}
+ {:device-id "arn:aws:braket:us-east-1::device/qpu/quera/Aquila",
+  :device-name "Aquila",
+  :device-status :online,
+  :device-type :qpu,
+  :provider "QuEra"}
+ {:device-id "arn:aws:braket:us-east-1::device/qpu/ionq/Harmony",
+  :device-name "Harmony",
+  :device-status :maintenance,
+  :device-type :qpu,
+  :provider :IonQ}
+ {:device-id "arn:aws:braket:::device/quantum-simulator/amazon/tn1",
+  :device-name "TN1",
+  :device-status :online,
+  :device-type :simulator,
+  :provider "Amazon Braket"}
+ {:device-id "arn:aws:braket:us-east-1::device/qpu/ionq/Aria-2",
+  :device-name "Aria 2",
+  :device-status :offline,
+  :device-type :qpu,
+  :provider "IonQ"}
+ {:device-id "arn:aws:braket:::device/quantum-simulator/amazon/sv1",
+  :device-name "SV1",
+  :device-status :online,
+  :device-type :simulator,
+  :provider "Amazon Braket"}
+ {:device-id "arn:aws:braket:us-east-1::device/qpu/xanadu/Borealis",
+  :device-name "Borealis",
+  :device-status :maintenance,
+  :device-type :qpu,
+  :provider "Xanadu"}
+ {:device-id "arn:aws:braket:::device/quantum-simulator/amazon/dm1",
+  :device-name "dm1",
+  :device-status :online,
+  :device-type :simulator,
+  :provider "Amazon Braket"}
+ {:device-id "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-1",
+  :device-name "Forte 1",
+  :device-status :offline,
+  :device-type :qpu,
+  :provider "IonQ"}
+ {:device-id "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-Enterprise-1",
+  :device-name "Forte Enterprise 1",
+  :device-status :online,
+  :device-type :qpu,
+  :provider "IonQ"}]

@@ -6,10 +6,8 @@
    devices."
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
-            [clojure.set :as set]
             [clojure.data.json :as json]
             [cognitect.aws.client.api :as aws]
-            [org.soulspace.qclojure.domain.topology :as topo]
             [org.soulspace.qclojure.application.format.qasm3 :as qasm3]
             [org.soulspace.qclojure.application.backend :as backend]
             [org.soulspace.qclojure.application.hardware-optimization :as hwopt]))
@@ -21,11 +19,6 @@
 (s/def ::region string?)
 (s/def ::max-parallel-shots pos-int?)
 (s/def ::device-type #{:quantum :simulator})
-
-(s/def ::backend-config
-  (s/keys :opt-un [::device-arn
-                   ::region
-                   ::device-type]))
 
 ;; S3 and result specs
 (s/def ::bucket string?)
@@ -327,11 +320,6 @@
 ;;;
 
 ; TODO use function from backend with qcloure 0.17.0 
-(defn device-entry
-  "Create a map of device ID to device map entry."
-  [device]
-  [(:id device) device])
-
 (defn- cache-devices!
   "Cache the list of available devices for 5 minutes to avoid excessive API calls"
   [_backend devices]
@@ -352,7 +340,10 @@
   "Call AWS Braket API to list available devices"
   [client]
   (try
-    (let [response (aws/invoke client {:op :SearchDevices})]
+    (println "Fetching devices from AWS Braket...")
+    (let [response (aws/invoke client {:op :SearchDevices
+                                       :request {:filters []}})]
+      (println "Braket devices response:" response)
       (if (:cognitect.anomalies/category response)
         {:error response}
         {:devices (:devices response)}))
