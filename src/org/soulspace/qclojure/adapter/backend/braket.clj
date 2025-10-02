@@ -318,6 +318,13 @@
 ;;;
 ;;; Device Management Helpers
 ;;;
+(defn braket-device
+  [braket-device]
+  {:id (:device-id braket-device)
+   :name (:device-name braket-device)
+   :status (:device-status braket-device)
+   :type (:device-type braket-device)
+   :provider (:provider braket-device)})
 
 ; TODO use function from backend with qcloure 0.17.0 
 (defn- cache-devices!
