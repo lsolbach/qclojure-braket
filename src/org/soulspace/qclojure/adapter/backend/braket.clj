@@ -104,7 +104,6 @@
 ;;;
 ;;; Multi-QPU Device Management Functions
 ;;;
-
 ;; Pricing multipliers by provider (relative to base cost)
 (def ^:private provider-pricing-multipliers
   "Cost multipliers for different QPU providers"
@@ -117,24 +116,12 @@
    :simulator 0.1 ; Simulators are much cheaper
    :default 1.0})
 
-(defn- parse-device-info
-  "Parse device information from AWS Braket device ARN"
-  [device-arn]
-  (when device-arn
-    (let [arn-parts (str/split device-arn #":")
-          device-path (last arn-parts)
-          path-parts (str/split device-path #"/")]
-      (when (>= (count path-parts) 4)
-        (let [[device-type provider device-name] (drop 1 path-parts)]
-          {:device-type (keyword device-type)
-           :provider (keyword provider)
-           :device-name device-name
-           :arn device-arn})))))
-
 (defn- provider-pricing-multiplier
   "Get pricing multiplier for a specific provider"
   [provider]
-  (get provider-pricing-multipliers provider (:default provider-pricing-multipliers)))
+  (get provider-pricing-multipliers
+       provider
+       (:default provider-pricing-multipliers)))
 
 ;;
 ;; AWS Pricing Functions
@@ -318,6 +305,20 @@
 ;;;
 ;;; Device Management Helpers
 ;;;
+(defn- parse-device-info
+  "Parse device information from AWS Braket device ARN"
+  [device-arn]
+  (when device-arn
+    (let [arn-parts (str/split device-arn #":")
+          device-path (last arn-parts)
+          path-parts (str/split device-path #"/")]
+      (when (>= (count path-parts) 4)
+        (let [[device-type provider device-name] (drop 1 path-parts)]
+          {:device-type (keyword device-type)
+           :provider (keyword provider)
+           :device-name device-name
+           :arn device-arn})))))
+
 (defn braket-device
   [braket-device]
   {:id (:device-id braket-device)
@@ -353,7 +354,7 @@
       (println "Braket devices response:" response)
       (if (:cognitect.anomalies/category response)
         {:error response}
-        {:devices (:devices response)}))
+        {:devices (map braket-device (:devices response))}))
     (catch Exception e
       {:error {:message (.getMessage e)
                :type :api-error}})))
