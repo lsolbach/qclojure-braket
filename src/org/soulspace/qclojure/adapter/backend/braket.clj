@@ -551,15 +551,15 @@
                         (let [result (braket-devices client)]
                           (:devices result)))
           normalized (map (fn [d]
-                            {:device-id (:deviceArn d)
-                             :device-name (:deviceName d)
+                            {:id (:deviceArn d)
+                             :name (:deviceName d)
                              :device-status (case (:deviceStatus d)
                                               "ONLINE" :online
                                               "OFFLINE" :offline
-                                              "RETIRED" :maintenance
+                                              "RETIRED" :retired
                                               :unknown)
                              :device-type (keyword (str/lower-case (or (:deviceType d) "unknown")))
-                             :provider (keyword (or (:providerName d) "aws"))})
+                             :provider (keyword (or (:providerName d) "AWS"))})
                           (or raw-devices []))]
       (when (and (seq normalized) (nil? (cached-devices this)))
         (cache-devices! this normalized))
