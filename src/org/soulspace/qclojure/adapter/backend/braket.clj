@@ -6,6 +6,8 @@
    devices."
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
+            [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.data.json :as json]
             [cognitect.aws.client.api :as aws]
             [org.soulspace.qclojure.application.format.qasm3 :as qasm3]
@@ -326,6 +328,10 @@
    :status (:device-status braket-device)
    :type (:device-type braket-device)
    :provider (:provider braket-device)})
+
+(def device-list
+  (edn/read-string
+   (slurp (io/resource "simulator-devices.edn"))))
 
 ; TODO use function from backend with qclojure 0.17.0+
 (defn- cache-devices!
