@@ -5,6 +5,7 @@
 * updated AWS API versions
 * incorporated backend protocol changes
 * implemented MultiDeviceBackend protocol
+* enhanced device handling
 * removed obsolete code
 
 ## Version 0.2.0

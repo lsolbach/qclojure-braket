@@ -326,7 +326,7 @@
    :type (:device-type braket-device)
    :provider (:provider braket-device)})
 
-; TODO use function from backend with qclojure 0.17.0 
+; TODO use function from backend with qclojure 0.17.0+
 (defn- cache-devices!
   "Cache the list of available devices for 5 minutes to avoid excessive API calls"
   [_backend devices]
