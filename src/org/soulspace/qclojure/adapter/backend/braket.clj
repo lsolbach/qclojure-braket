@@ -307,6 +307,26 @@
 ;;;
 ;;; Device Management Helpers
 ;;;
+(def device-status {"ONLINE" :online
+                    "OFFLINE" :offline
+                    "RETIRED" :retired})
+
+(def device-type {"QPU" :qpu
+                  "SIMULATOR" :simulator})
+
+(def device-list
+  (edn/read-string
+   (slurp (io/resource "simulator-devices.edn"))))
+
+(def device-properties
+  (->> device-list
+       (filter :arn)
+       (map (fn [d] (assoc d :id (:arn d))))
+       (map (fn [d] [(:id d) d]))
+       (into {})))
+
+(println "Loaded device properties:" device-properties)
+
 ; TODO needed?
 (defn- parse-device-info
   "Parse device information from AWS Braket device ARN"
@@ -324,32 +344,17 @@
 
 (defn braket-device
   [braket-device]
-  {:id (:device-id braket-device)
-   :name (:device-name braket-device)
-   :status (:device-status braket-device)
-   :type (:device-type braket-device)
-   :provider (:provider braket-device)})
-
-(def device-list
-  (edn/read-string
-   (slurp (io/resource "simulator-devices.edn"))))
-
-; TODO use function from backend with qclojure 0.17.0+
-(defn- cache-devices!
-  "Cache the list of available devices for 5 minutes to avoid excessive API calls"
-  [_backend devices]
-  (swap! backend-state assoc
-         :devices devices
-         :last-devices-refresh (System/currentTimeMillis)))
-
-(defn- cached-devices
-  "Get cached devices if still valid (less than 5 minutes old)"
-  [_backend]
-  (let [{:keys [devices last-devices-refresh]} @backend-state
-        cache-age (- (System/currentTimeMillis) (or last-devices-refresh 0))
-        cache-valid? (< cache-age (* 5 60 1000))] ; 5 minutes
-    (when cache-valid?
-      devices)))
+  (println "Braket device raw:" braket-device)
+  (println "Type of :deviceType" (type (:deviceType braket-device)))
+  (println "Type of :deviceStatus" (type (:deviceStatus braket-device)))
+  (let [arn (:deviceArn braket-device)
+        braket-device {:id (:deviceArn braket-device)
+                       :name (:deviceName braket-device)
+                       :status (device-status (:deviceStatus braket-device) :unknown)
+                       :type (device-type (:deviceType braket-device) :qpu)
+                       :provider (:providerName braket-device)}
+        enhanced-device (merge (get device-properties arn {}) braket-device)]
+    enhanced-device))
 
 (defn- braket-devices
   "Call AWS Braket API to list available devices"
@@ -361,7 +366,7 @@
       (println "Braket devices response:" response)
       (if (:cognitect.anomalies/category response)
         {:error response}
-        {:devices (map braket-device (:devices response))}))
+        (map braket-device (:devices response))))
     (catch Exception e
       {:error {:message (.getMessage e)
                :type :api-error}})))
@@ -378,17 +383,13 @@
   ;; QuantumBackend protocol implementation
   backend/QuantumBackend
   (backend-info [_this]
-    "Get information about this backend instance (conforms to ::backend-info)"
     {:backend-type :cloud
      :backend-name "Amazon Braket"
      :capabilities #{:mult-device :cloud :batch}
-     :backend-config config
+     :config config
      :provider :aws
-     :region (:region config)
-     :device-arn (:device-arn config)
-     :device-type (:device-type config)
-     :default-shots (:shots config)
-     :max-parallel-shots (:max-parallel-shots config)
+     :devices (:devices @backend-state)
+     :device (:current-device @backend-state)
      :created-at (System/currentTimeMillis)})
 
   (device [_this] (:current-device @backend-state))
@@ -547,7 +548,9 @@
   backend/MultiDeviceBackend
   (devices [_this]
     "List all available Braket devices (returns collection as per protocol)"
-    (braket-devices client))
+    (let [devices (braket-devices client)]
+      (swap! backend-state assoc :devices devices)
+      devices))
 
   (select-device [_this device]
     (let [device (if (string? device)
@@ -771,60 +774,31 @@
 
 (comment
   ;; REPL experimentation and testing
+  (require '[org.soulspace.qclojure.domain.circuit :as circuit])
 
-  ;; Create test backend
-  (def test-backend (create-braket-simulator {:s3-bucket "test-braket-results"}))
+  ;; First create a braket backend instance
+  (def backend (create-braket-simulator {:s3-bucket "my-braket-results-bucket"}))
 
-  ;; Test S3 location parsing
-  (def mock-task-response
-    {:outputS3Bucket "quantum-task-outputs"
-     :outputS3Directory "tasks/arn-aws-braket-us-east-1-123456789012-quantum-task-12345"
-     :quantumTaskStatus "COMPLETED"})
+  ;; Create a Bell state circuit
+  (def bell-circuit (circuit/bell-state-circuit))
 
-  (parse-s3-location mock-task-response)
-
-  ;; Test result parsing with different formats
-  (def mock-measurement-counts-json
-    "{\"measurementCounts\": {\"000\": 334, \"001\": 342, \"010\": 162, \"011\": 162}}")
-
-  (def mock-measurements-json
-    "{\"measurements\": [[0, 1, 0], [1, 0, 1], [0, 0, 0]]}")
-
-  (def mock-statevector-json
-    "{\"statevector\": [0.5, 0.5, 0.0, 0.0, 0.5, 0.5, 0.0, 0.0]}")
-
-  (parse-braket-results mock-measurement-counts-json)
-  (parse-braket-results mock-measurements-json)
-  (parse-braket-results mock-statevector-json)
-
-  ;; Test backend info
-  (backend/backend-info test-backend)
-
-  ;; Test device availability check
-  (backend/available? test-backend)
-
-  ;; Test error handling
-  (parse-braket-results "invalid json")
-  (parse-s3-location {:no-s3-bucket true})
-
-  ;; Test pricing functionality
-  (def mock-pricing-products
-    ["{\"product\": {\"attributes\": {\"serviceName\": \"Amazon Braket\", \"usagetype\": \"Task-Request\"}}, 
-       \"terms\": {\"OnDemand\": {\"test-term\": {\"priceDimensions\": {\"test-dim\": {\"unit\": \"Request\", \"pricePerUnit\": {\"USD\": \"0.075\"}}}}}}}"])
-
-  (parse-braket-pricing mock-pricing-products :simulator)
-
-  ;; Test cost estimation
-  (def mock-circuit {:gate-count 10})
-  (def mock-circuits [{:gate-count 5} {:gate-count 8} {:gate-count 12}])
-
-  (backend/estimate-cost test-backend mock-circuit {:shots 1000})
-  (backend/estimate-cost test-backend mock-circuits {:shots 500})
+  (backend/devices backend)
+  (backend/select-device backend "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
+  (backend/device backend)
 
   ;; Test QPU pricing
-  (def qpu-backend (create-braket-qpu "arn:aws:braket:us-east-1::device/qpu/rigetti/aspen-m-3" 
-                                      {:s3-bucket "test-braket-results"}))
-  (backend/estimate-cost qpu-backend mock-circuit {:shots 1000})
-  
+  (backend/estimate-cost backend bell-circuit {:shots 1000})
+
+  ;; (backend/calibration-data backend "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
+
+  (backend/available? backend)
+
+  (let [job-id (backend/submit-circuit backend bell-circuit {:shots 10})]
+    (println "Submitted job:" job-id)
+    (Thread/sleep 5000)
+    (println "Job status:" (backend/job-status backend job-id))
+    (Thread/sleep 20000)
+    (println "Job result:" (backend/job-result backend job-id)))
+
   ;
   )
