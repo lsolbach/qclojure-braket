@@ -545,26 +545,9 @@
 
   ;; MultiDeviceBackend protocol implementation  
   backend/MultiDeviceBackend
-  (devices [this]
+  (devices [_this]
     "List all available Braket devices (returns collection as per protocol)"
-    (let [raw-devices (if-let [cached (cached-devices this)]
-                        cached
-                        (let [result (braket-devices client)]
-                          (:devices result)))
-          normalized (map (fn [d]
-                            {:id (:deviceArn d)
-                             :name (:deviceName d)
-                             :device-status (case (:deviceStatus d)
-                                              "ONLINE" :online
-                                              "OFFLINE" :offline
-                                              "RETIRED" :retired
-                                              :unknown)
-                             :device-type (keyword (str/lower-case (or (:deviceType d) "unknown")))
-                             :provider (keyword (or (:providerName d) "AWS"))})
-                          (or raw-devices []))]
-      (when (and (seq normalized) (nil? (cached-devices this)))
-        (cache-devices! this normalized))
-      normalized))
+    (braket-devices client))
 
   (select-device [_this device]
     (let [device (if (string? device)
