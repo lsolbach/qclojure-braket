@@ -394,6 +394,19 @@
 
   (device [_this] (:current-device @backend-state))
 
+  (available? [_this]
+            "Check if the backend is available for job submission"
+            (let [device-arn (or (:id (:current-device @backend-state))
+                                 "arn:aws:braket:::device/quantum-simulator/amazon/sv1")]
+              (try
+                (let [response (aws/invoke client {:op :GetDevice
+                                                   :request {:deviceArn device-arn}})]
+                  (if (:cognitect.anomalies/category response)
+                    false
+                    (= "ONLINE" (:deviceStatus response))))
+                (catch Exception _e
+                  false))))
+
   (submit-circuit [_this circuit options]
     (let [device (:current-device @backend-state)
 
@@ -409,13 +422,18 @@
           shots (get options :shots 1000)
           timestamp (System/currentTimeMillis)
           task-key (str (:s3-key-prefix config) "task-" timestamp "-" (java.util.UUID/randomUUID))
+          ;; TODO required fields: action, clientToken, deviceArn, outputS3Bucket, outputS3KeyPrefix, shots
           task-request {:deviceArn (:id device)
-                        :action {:source qasm3-circuit
-                                 :sourceType "OPENQASM_3"}
+                        :clientToken "qclojure-braket-backend"
+                        :action {:braketSchemaHeader {:name "braket.ir.openqasm.program"
+                                                      :version "1"}
+                                 :source qasm3-circuit}
                         :shots shots
                         :outputS3Bucket (:s3-bucket config)
                         :outputS3KeyPrefix task-key}
 
+          _ (println "Submitting task request:" (json/write-str task-request))
+          task-request (slurp "dev/req2.json") ;; FIXME for testing
           ;; Submit to Braket
           response (aws/invoke client {:op :CreateQuantumTask :request task-request})]
 
@@ -497,9 +515,25 @@
        :job-id job-id
        :error-message "Job not found"}))
 
+  (cancel-job [_this job-id]
+            "Cancel a running job"
+            (if-let [job-info (get-in @state [:jobs job-id])]
+              (let [task-arn (:task-arn job-info)]
+                (try
+                  (let [response (aws/invoke client {:op :CancelQuantumTask
+                                                     :request {:quantumTaskArn task-arn}})]
+                    (if (:cognitect.anomalies/category response)
+                      :cannot-cancel
+                      (do
+                        (swap! state assoc-in [:jobs job-id :cancelled-at] (System/currentTimeMillis))
+                        :cancelled)))
+                  (catch Exception _e
+                    :cannot-cancel)))
+              :not-found))
+
   (queue-status [_this]
     "Get queue status information for the configured device"
-    (let [device-arn (or (:device-arn config)
+    (let [device-arn (or (:id (:current-device @backend-state))
                          "arn:aws:braket:::device/quantum-simulator/amazon/sv1")]
       (try
         (let [response (aws/invoke client {:op :GetDevice
@@ -514,35 +548,6 @@
                :status (:deviceStatus response)})))
         (catch Exception e
           {:error {:message (.getMessage e) :type :api-error}}))))
-
-  (available? [_this]
-    "Check if the backend is available for job submission"
-    (let [device-arn (or (:device-arn config)
-                         "arn:aws:braket:::device/quantum-simulator/amazon/sv1")]
-      (try
-        (let [response (aws/invoke client {:op :GetDevice
-                                           :request {:deviceArn device-arn}})]
-          (if (:cognitect.anomalies/category response)
-            false
-            (= "ONLINE" (:deviceStatus response))))
-        (catch Exception _e
-          false))))
-
-  (cancel-job [_this job-id]
-    "Cancel a running job"
-    (if-let [job-info (get-in @state [:jobs job-id])]
-      (let [task-arn (:task-arn job-info)]
-        (try
-          (let [response (aws/invoke client {:op :CancelQuantumTask
-                                             :request {:quantumTaskArn task-arn}})]
-            (if (:cognitect.anomalies/category response)
-              :cannot-cancel
-              (do
-                (swap! state assoc-in [:jobs job-id :cancelled-at] (System/currentTimeMillis))
-                :cancelled)))
-          (catch Exception _e
-            :cannot-cancel)))
-      :not-found))
 
   ;; MultiDeviceBackend protocol implementation  
   backend/MultiDeviceBackend
@@ -578,7 +583,7 @@
      :session-start (System/currentTimeMillis)})
 
   (estimate-cost [this circuits options]
-    (let [device-arn (or (:device-arn config)
+    (let [device-arn (or (:id (:current-device @backend-state))
                          "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
           shots (get options :shots 1000)
           circuit-count (if (sequential? circuits) (count circuits) 1)
@@ -784,6 +789,7 @@
 
   (backend/devices backend)
   (backend/select-device backend "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
+  (backend/select-device backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-1")
   (backend/device backend)
 
   ;; Test QPU pricing
@@ -799,6 +805,13 @@
     (println "Job status:" (backend/job-status backend job-id))
     (Thread/sleep 20000)
     (println "Job result:" (backend/job-result backend job-id)))
+
+  (slurp "dev/req.json")
+  
+  (let [response (aws/invoke (:client backend) {:op :CreateQuantumTask :request (slurp "dev/req.json")})]
+    (println "CreateQuantumTask response:" response)
+    )
+
 
   ;
   )
