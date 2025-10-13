@@ -695,7 +695,7 @@
 ;;;
 ;;; BraketBackend Implementation
 ;;;
-; TODO add status field to backend. Will contain an atom with the backend state.
+; TODO add state field to backend. Will contain an atom with the backend state.
 (defrecord BraketBackend [client s3-client pricing-client config state session-info]
   ;; Basic backend info
   Object
