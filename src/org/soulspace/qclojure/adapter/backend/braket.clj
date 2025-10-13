@@ -12,8 +12,7 @@
             [cognitect.aws.client.api :as aws]
             [org.soulspace.qclojure.application.format.qasm3 :as qasm3]
             [org.soulspace.qclojure.application.backend :as backend]
-            [org.soulspace.qclojure.application.hardware-optimization :as hwopt]
-            [org.soulspace.qclojure.domain.circuit :as circuit]))
+            [org.soulspace.qclojure.application.hardware-optimization :as hwopt]))
 
 ;;;
 ;;; Specs for Data Validation
@@ -373,6 +372,9 @@
       {:error {:message (.getMessage e)
                :type :api-error}})))
 
+;;;
+;;; Quantum Backend Functions
+;;;
 (defn backend-info
   [backend]
   {:backend-type :cloud
@@ -544,6 +546,9 @@
       (catch Exception e
         {:error {:message (.getMessage e) :type :api-error}}))))
 
+;;;
+;;; Multi-Device Management Functions
+;;;
 (defn devices
   [backend]
   (let [devices (braket-devices (:client backend))]
@@ -559,6 +564,9 @@
     (swap! backend-state assoc :current-device device)
     (:current-device @backend-state)))
 
+;;;
+;;; Cloud Backend Management Functions
+;;;
 (defn authenticate
   [backend]
   ;; For AWS, we rely on the default credentials provider chain
@@ -617,6 +625,73 @@
                             (* total-shots adjusted-shot-cost))
      :pricing-source (:source pricing-data)
      :last-updated (:last-updated pricing-data)}))
+
+;;;
+;;; Batch Job Management Functions
+;;;
+(defn batch-status
+  [backend batch-id]
+  (if-let [batch-info (get-in @(:state backend) [:batches batch-id])]
+    (let [job-statuses (doall (map #(backend/job-status backend %) (:job-ids batch-info)))
+          completed (count (filter #(= :completed %) job-statuses))
+          failed (count (filter #(= :failed %) job-statuses))
+          running (count (filter #(#{:running :queued :submitted} %) job-statuses))]
+      {:batch-id batch-id
+       :total-jobs (count (:job-ids batch-info))
+       :completed completed
+       :failed failed
+       :running running
+       :overall-status (cond
+                         (= completed (count job-statuses)) :completed
+                         (> failed 0) :partially-failed
+                         (> running 0) :running
+                         :else :unknown)
+       :job-statuses job-statuses})
+    {:error "Batch not found"}))
+
+(defn batch-results
+  [backend batch-id]
+  (if-let [batch-info (get-in @backend-state [:batches batch-id])]
+    (let [job-ids (:job-ids batch-info)
+          results (map #(backend/job-result backend %) job-ids)]
+      {:batch-id batch-id
+       :total-jobs (count job-ids)
+       :results results
+       :completed-at (System/currentTimeMillis)})
+    {:error "Batch not found"}))
+
+(defn batch-submit
+  [backend circuits options]
+  (let [batch-id (str "batch-" (java.util.UUID/randomUUID))
+        max-parallel (get-in (:config backend) [:max-parallel-shots] 10)
+        chunks (partition-all max-parallel circuits)]
+    (loop [chunks chunks
+           job-ids []
+           chunk-index 0]
+      (if (seq chunks)
+        (let [chunk (first chunks)
+              chunk-jobs (doall
+                          (map-indexed
+                           (fn [i circuit]
+                             (let [job-options (assoc options :batch-id batch-id
+                                                      :chunk-index chunk-index
+                                                      :circuit-index i)]
+                               (backend/submit-circuit backend circuit job-options)))
+                           chunk))]
+          (recur (rest chunks)
+                 (concat job-ids chunk-jobs)
+                 (inc chunk-index)))
+            ; Store batch information
+        (do
+          (swap! @backend-state assoc-in [:batches batch-id]
+                 {:job-ids job-ids
+                  :submitted-at (System/currentTimeMillis)
+                  :total-circuits (count circuits)
+                  :status :submitted})
+          {:batch-id batch-id
+           :job-ids job-ids
+           :total-circuits (count circuits)})))))
+
 ;;;
 ;;; BraketBackend Implementation
 ;;;
@@ -675,64 +750,13 @@
 
   backend/BatchJobBackend
   (batch-status [this batch-id]
-    (if-let [batch-info (get-in @(:state this) [:batches batch-id])]
-      (let [job-statuses (doall (map #(backend/job-status this %) (:job-ids batch-info)))
-            completed (count (filter #(= :completed %) job-statuses))
-            failed (count (filter #(= :failed %) job-statuses))
-            running (count (filter #(#{:running :queued :submitted} %) job-statuses))]
-        {:batch-id batch-id
-         :total-jobs (count (:job-ids batch-info))
-         :completed completed
-         :failed failed
-         :running running
-         :overall-status (cond
-                           (= completed (count job-statuses)) :completed
-                           (> failed 0) :partially-failed
-                           (> running 0) :running
-                           :else :unknown)
-         :job-statuses job-statuses})
-      {:error "Batch not found"}))
+    (batch-status this batch-id))
 
   (batch-results [this batch-id]
-    (if-let [batch-info (get-in @backend-state [:batches batch-id])]
-      (let [job-ids (:job-ids batch-info)
-            results (map #(backend/job-result this %) job-ids)]
-        {:batch-id batch-id
-         :total-jobs (count job-ids)
-         :results results
-         :completed-at (System/currentTimeMillis)})
-      {:error "Batch not found"}))
+    (batch-results this batch-id))
 
   (batch-submit [this circuits options]
-    (let [batch-id (str "batch-" (java.util.UUID/randomUUID))
-          max-parallel (get-in (:config this) [:max-parallel-shots] 10)
-          chunks (partition-all max-parallel circuits)]
-      (loop [chunks chunks
-             job-ids []
-             chunk-index 0]
-        (if (seq chunks)
-          (let [chunk (first chunks)
-                chunk-jobs (doall
-                            (map-indexed
-                             (fn [i circuit]
-                               (let [job-options (assoc options :batch-id batch-id
-                                                        :chunk-index chunk-index
-                                                        :circuit-index i)]
-                                 (backend/submit-circuit this circuit job-options)))
-                             chunk))]
-            (recur (rest chunks)
-                   (concat job-ids chunk-jobs)
-                   (inc chunk-index)))
-          ; Store batch information
-          (do
-            (swap! @backend-state assoc-in [:batches batch-id]
-                   {:job-ids job-ids
-                    :submitted-at (System/currentTimeMillis)
-                    :total-circuits (count circuits)
-                    :status :submitted})
-            {:batch-id batch-id
-             :job-ids job-ids
-             :total-circuits (count circuits)}))))))
+    (batch-submit this circuits options)))
 
 ;;;
 ;;; Backend Creation Functions
@@ -771,7 +795,7 @@
      (throw (ex-info "S3 bucket is required for Braket backend. AWS Braket stores all quantum task results in S3."
                      {:type :missing-s3-bucket
                       :config config
-                      :help "Provide :s3-bucket in the config map, e.g., {:s3-bucket \"my-braket-results\"}"})))
+                      :help "Provide :s3-bucket in the config map, e.g., {:s3-bucket \"amazon-braket-results-1234\"}"})))
    (let [merged-config (merge {:region "us-east-1"
                                :shots 1000
                                :max-parallel-shots 10
