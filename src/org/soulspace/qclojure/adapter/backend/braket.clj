@@ -12,7 +12,8 @@
             [cognitect.aws.client.api :as aws]
             [org.soulspace.qclojure.application.format.qasm3 :as qasm3]
             [org.soulspace.qclojure.application.backend :as backend]
-            [org.soulspace.qclojure.application.hardware-optimization :as hwopt]))
+            [org.soulspace.qclojure.application.hardware-optimization :as hwopt]
+            [org.soulspace.qclojure.domain.circuit :as circuit]))
 
 ;;;
 ;;; Specs for Data Validation
@@ -23,6 +24,7 @@
 (s/def ::device-type #{:quantum :simulator})
 
 ;; S3 and result specs
+(s/def ::client-token string?)
 (s/def ::bucket string?)
 (s/def ::key string?)
 (s/def ::s3-location
@@ -370,9 +372,255 @@
     (catch Exception e
       {:error {:message (.getMessage e)
                :type :api-error}})))
+
+(defn backend-info
+  [backend]
+  {:backend-type :cloud
+   :backend-name "Amazon Braket"
+   :capabilities #{:mult-device :cloud :batch}
+   :config (:config backend)
+   :provider :aws
+   :devices (:devices @backend-state)
+   :device (:current-device @backend-state)
+   :created-at (System/currentTimeMillis)})
+
+(defn available?
+  [backend]
+  (let [device-arn (or (:id (:current-device @backend-state))
+                       "arn:aws:braket:::device/quantum-simulator/amazon/sv1")]
+    (try
+      (let [response (aws/invoke (:client backend) {:op :GetDevice
+                                                    :request {:deviceArn device-arn}})
+            _ (println "Device availability response:" response)]
+        (if (:cognitect.anomalies/category response)
+          false
+          (= "ONLINE" (:deviceStatus response))))
+      (catch Exception _e
+        false))))
+
+(defn device
+  [backend]
+  (:current-device @backend-state))
+
+(defn submit-circuit
+  [backend circuit options]
+  (let [device (:current-device @backend-state)
+
+        ;; Apply hardware optimization if requested
+        optimization-result (hwopt/optimize circuit device options)
+
+        optimized-circuit (:circuit optimization-result)
+
+        ;; Transform circuit to QASM3 format for Braket
+        qasm3-circuit (qasm3/circuit-to-qasm optimized-circuit)
+        action (json/write-str {:braketSchemaHeader {:name "braket.ir.openqasm.program"
+                                                     :version "1"}
+                                :source qasm3-circuit})
+        ;; Prepare task request
+        shots (get options :shots 1000)
+        timestamp (System/currentTimeMillis)
+        task-key (str (:s3-key-prefix (:config backend)) "task-" timestamp "-" (java.util.UUID/randomUUID))
+        task-request {:deviceArn (:id device)
+                      :clientToken (str "qclojure-braket-backend-" (rand-int 100))
+                      :action action
+                      :shots shots
+                      :outputS3Bucket (:s3-bucket (:config backend))
+                      :outputS3KeyPrefix task-key}
+        _ (println "Submitting task request:" (json/write-str task-request))
+        ;; Submit to Braket
+        response (aws/invoke (:client backend) {:op :CreateQuantumTask :request task-request})]
+
+    (if (:cognitect.anomalies/category response)
+      {:error response}
+      (let [task-arn (:quantumTaskArn response)
+            job-id (str "braket-" (java.util.UUID/randomUUID))]
+          ; Store the task mapping in our state with additional metadata
+        (swap! backend-state assoc-in [:jobs job-id] {:task-arn task-arn
+                                                      :submitted-at (System/currentTimeMillis)
+                                                      :original-circuit circuit
+                                                      :final-circuit optimized-circuit
+                                                      :options options})
+        job-id))))
+
+(defn job-status
+  [backend job-id]
+  (if-let [job-info (get-in @backend-state [:jobs job-id])]
+    (let [task-arn (:task-arn job-info)
+          response (aws/invoke (:client backend) {:op :GetQuantumTask
+                                       :request {:quantumTaskArn task-arn}})
+          _ (println "Job status response:" response)]
+      (if (:cognitect.anomalies/category response)
+        :failed
+        (case (:status response)
+          "CREATED" :submitted
+          "QUEUED" :queued
+          "RUNNING" :running
+          "COMPLETED" :completed
+          "FAILED" :failed
+          "CANCELLED" :cancelled
+          :unknown)))
+    :failed))
+
+(defn job-result
+  [backend job-id]
+  (if-let [job-info (get-in @backend-state [:jobs job-id])]
+    (let [task-arn (:task-arn job-info)
+          response (aws/invoke (:client backend) {:op :GetQuantumTask
+                                       :request {:quantumTaskArn task-arn}})
+          _ (println "Job result response:" response)]
+      (if (:cognitect.anomalies/category response)
+        {:job-status :failed
+         :job-id job-id
+         :error-message (str "AWS error: " (pr-str response))}
+        (if (= "COMPLETED" (:status response))
+          ;; Retrieve actual results from S3
+          (let [s3-results (retrieve-task-results (:s3-client backend) response)
+                shots (get-in job-info [:options :shots] 0)]
+            (if (:error s3-results)
+              {:job-status :failed
+               :job-id job-id
+               :error-message (get-in s3-results [:error :message])}
+              (let [meas (:measurements s3-results)
+                    ;; Normalize to QClojure's :measurement-results map {"bitstring" count}
+                    measurement-results (cond
+                                          (map? meas) meas
+                                          (sequential? meas)
+                                          (->> meas
+                                               (map (fn [bits]
+                                                      (->> bits
+                                                           (map str)
+                                                           (apply str))))
+                                               (frequencies))
+                                          :else {})]
+                {:job-status :completed
+                 :job-id job-id
+                 :measurement-results measurement-results
+                 :probabilities (:probabilities s3-results)
+                 :shots shots
+                 :execution-time-ms (- (System/currentTimeMillis)
+                                       (:submitted-at job-info))
+                 :task-arn task-arn
+                 :raw-results (:raw-results s3-results)
+                 :task-metadata (:task-metadata s3-results)
+                 :s3-location (:s3-location s3-results)})))
+          {:job-status :running
+           :job-id job-id
+           :message "Job not completed yet"})))
+    {:job-status :failed
+     :job-id job-id
+     :error-message "Job not found"}))
+
+(defn cancel-job
+  [backend job-id]
+  (if-let [job-info (get-in @backend-state [:jobs job-id])]
+    (let [task-arn (:task-arn job-info)]
+      (try
+        (let [response (aws/invoke (:client backend) {:op :CancelQuantumTask
+                                           :request {:quantumTaskArn task-arn}})]
+          (if (:cognitect.anomalies/category response)
+            :cannot-cancel
+            (do
+              (swap! backend-state assoc-in [:jobs job-id :cancelled-at] (System/currentTimeMillis))
+              :cancelled)))
+        (catch Exception _e
+          :cannot-cancel)))
+    :not-found))
+
+(defn queue-status
+  [backend]
+  (let [device-arn (or (:id (:current-device @backend-state))
+                       "arn:aws:braket:::device/quantum-simulator/amazon/sv1")]
+    (try
+      (let [response (aws/invoke (:client backend) {:op :GetDevice
+                                         :request {:deviceArn device-arn}})]
+        (if (:cognitect.anomalies/category response)
+          {:error response}
+          (let [queue-info (:deviceQueueInfo response)]
+            {:device-arn device-arn
+             :queue-type (:queueType queue-info)
+             :queue-size (:queueSize queue-info)
+             :priority (:queuePriority queue-info)
+             :status (:deviceStatus response)})))
+      (catch Exception e
+        {:error {:message (.getMessage e) :type :api-error}}))))
+
+(defn devices
+  [backend]
+  (let [devices (braket-devices (:client backend))]
+    (swap! backend-state assoc :devices devices)
+    devices))
+
+(defn select-device
+  [backend device]
+  (let [device (if (string? device)
+                 (some (fn [d] (when (= (:id d) device) d))
+                       (:devices @backend-state))
+                 device)]
+    (swap! backend-state assoc :current-device device)
+    (:current-device @backend-state)))
+
+(defn authenticate
+  [backend]
+  ;; For AWS, we rely on the default credentials provider chain
+  ;; Optionally, we could accept explicit credentials here
+  {:status :authenticated
+   :region (:region (:config backend))
+   :authenticated-at (System/currentTimeMillis)})
+
+(defn session-info
+  [backend]
+  {:status :authenticated
+   :session-id (str "braket-session-" (java.util.UUID/randomUUID))
+   :region (:region (:config backend))
+   :device-arn (:device-arn (:config backend))
+   :active-jobs (count (get-in @backend-state [:jobs]))
+   :active-batches (count (get-in @backend-state [:batches]))
+   :session-start (System/currentTimeMillis)})
+
+(defn estimate-cost
+  [backend circuits options]
+  (let [device-arn (or (:id (:current-device @backend-state))
+                       "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
+        shots (get options :shots 1000)
+        circuit-count (if (sequential? circuits) (count circuits) 1)
+        total-shots (* circuit-count shots)
+        device-type (if (str/includes? device-arn "simulator") :simulator :quantum)
+        region (:region (:config backend) "us-east-1")
+        pricing-data (braket-pricing backend device-type region)
+        base-cost (:price-per-task pricing-data)
+        shot-cost (:price-per-shot pricing-data)
+        circuit-complexity (get (if (sequential? circuits) (first circuits) circuits) :gate-count 10)
+        ;; Enhanced: Apply provider-specific pricing multiplier
+        device-info (parse-device-info device-arn)
+        provider-multiplier (if device-info
+                              (provider-pricing-multiplier (:provider device-info))
+                              1.0)
+        adjusted-base-cost (* base-cost provider-multiplier)
+        adjusted-shot-cost (* shot-cost provider-multiplier)]
+    {:total-cost (+ (* circuit-count adjusted-base-cost)
+                    (* total-shots adjusted-shot-cost))
+     :currency (:currency pricing-data)
+     :cost-breakdown {:base-cost-per-task adjusted-base-cost
+                      :shot-cost-per-shot adjusted-shot-cost
+                      :total-tasks circuit-count
+                      :total-shots total-shots
+                      :task-cost (* circuit-count adjusted-base-cost)
+                      :shot-cost (* total-shots adjusted-shot-cost)
+                      :provider-multiplier provider-multiplier
+                      :original-base-cost base-cost
+                      :original-shot-cost shot-cost
+                      :device-type device-type
+                      :provider (get device-info :provider :unknown)
+                      :complexity-factor circuit-complexity}
+     ;; legacy fields retained for convenience
+     :estimated-cost-usd (+ (* circuit-count adjusted-base-cost)
+                            (* total-shots adjusted-shot-cost))
+     :pricing-source (:source pricing-data)
+     :last-updated (:last-updated pricing-data)}))
 ;;;
 ;;; BraketBackend Implementation
 ;;;
+; TODO add status field to backend. Will contain an atom with the backend state.
 (defrecord BraketBackend [client s3-client pricing-client config state session-info]
   ;; Basic backend info
   Object
@@ -382,249 +630,51 @@
 
   ;; QuantumBackend protocol implementation
   backend/QuantumBackend
-  (backend-info [_this]
-    {:backend-type :cloud
-     :backend-name "Amazon Braket"
-     :capabilities #{:mult-device :cloud :batch}
-     :config config
-     :provider :aws
-     :devices (:devices @backend-state)
-     :device (:current-device @backend-state)
-     :created-at (System/currentTimeMillis)})
+  (backend-info [this]
+    (backend-info this))
 
-  (device [_this] (:current-device @backend-state))
+  (device [this]
+    (device this))
 
-  (available? [_this]
-            "Check if the backend is available for job submission"
-            (let [device-arn (or (:id (:current-device @backend-state))
-                                 "arn:aws:braket:::device/quantum-simulator/amazon/sv1")]
-              (try
-                (let [response (aws/invoke client {:op :GetDevice
-                                                   :request {:deviceArn device-arn}})]
-                  (if (:cognitect.anomalies/category response)
-                    false
-                    (= "ONLINE" (:deviceStatus response))))
-                (catch Exception _e
-                  false))))
+  (available? [this]
+    (available? this))
 
-  (submit-circuit [_this circuit options]
-    (let [device (:current-device @backend-state)
+  (submit-circuit [this circuit options]
+    (submit-circuit this circuit options))
 
-          ;; Apply hardware optimization if requested
-          optimization-result (hwopt/optimize circuit device options)
+  (job-status [this job-id]
+    (job-status this job-id))
 
-          optimized-circuit (:circuit optimization-result)
+  (job-result [this job-id]
+    (job-result this job-id))
 
-          ;; Transform circuit to QASM3 format for Braket
-          qasm3-circuit (qasm3/circuit-to-qasm optimized-circuit)
+  (cancel-job [this job-id]
+    (cancel-job this job-id))
 
-          ;; Prepare task request
-          shots (get options :shots 1000)
-          timestamp (System/currentTimeMillis)
-          task-key (str (:s3-key-prefix config) "task-" timestamp "-" (java.util.UUID/randomUUID))
-          ;; TODO required fields: action, clientToken, deviceArn, outputS3Bucket, outputS3KeyPrefix, shots
-          task-request {:deviceArn (:id device)
-                        :clientToken "qclojure-braket-backend"
-                        :action {:braketSchemaHeader {:name "braket.ir.openqasm.program"
-                                                      :version "1"}
-                                 :source qasm3-circuit}
-                        :shots shots
-                        :outputS3Bucket (:s3-bucket config)
-                        :outputS3KeyPrefix task-key}
-
-          _ (println "Submitting task request:" (json/write-str task-request))
-          task-request (slurp "dev/req2.json") ;; FIXME for testing
-          ;; Submit to Braket
-          response (aws/invoke client {:op :CreateQuantumTask :request task-request})]
-
-      (if (:cognitect.anomalies/category response)
-        {:error response}
-        (let [task-arn (:quantumTaskArn response)
-              job-id (str "braket-" (java.util.UUID/randomUUID))]
-          ; Store the task mapping in our state with additional metadata
-          (swap! state assoc-in [:jobs job-id] {:task-arn task-arn
-                                                :submitted-at (System/currentTimeMillis)
-                                                :original-circuit circuit
-                                                :final-circuit optimized-circuit
-                                                :options options})
-          job-id))))
-
-  (job-status [_this job-id]
-    "Get the status of a submitted job (keyword per protocol)"
-    (if-let [job-info (get-in @state [:jobs job-id])]
-      (let [task-arn (:task-arn job-info)
-            response (aws/invoke client {:op :GetQuantumTask
-                                         :request {:quantumTaskArn task-arn}})]
-        (if (:cognitect.anomalies/category response)
-          :failed
-          (case (:quantumTaskStatus response)
-            "CREATED" :submitted
-            "QUEUED" :queued
-            "RUNNING" :running
-            "COMPLETED" :completed
-            "FAILED" :failed
-            "CANCELLED" :cancelled
-            :unknown)))
-      :failed))
-
-  (job-result [_this job-id]
-    "Get the results of a completed job (protocol-conformant map)"
-    (if-let [job-info (get-in @state [:jobs job-id])]
-      (let [task-arn (:task-arn job-info)
-            response (aws/invoke client {:op :GetQuantumTask
-                                         :request {:quantumTaskArn task-arn}})]
-        (if (:cognitect.anomalies/category response)
-          {:job-status :failed
-           :job-id job-id
-           :error-message (str "AWS error: " (pr-str response))}
-          (if (= "COMPLETED" (:quantumTaskStatus response))
-            ;; Retrieve actual results from S3
-            (let [s3-results (retrieve-task-results s3-client response)
-                  shots (get-in job-info [:options :shots] 0)]
-              (if (:error s3-results)
-                {:job-status :failed
-                 :job-id job-id
-                 :error-message (get-in s3-results [:error :message])}
-                (let [meas (:measurements s3-results)
-                      ;; Normalize to QClojure's :measurement-results map {"bitstring" count}
-                      measurement-results (cond
-                                            (map? meas) meas
-                                            (sequential? meas)
-                                            (->> meas
-                                                 (map (fn [bits]
-                                                        (->> bits
-                                                             (map str)
-                                                             (apply str))))
-                                                 (frequencies))
-                                            :else {})]
-                  {:job-status :completed
-                   :job-id job-id
-                   :measurement-results measurement-results
-                   :probabilities (:probabilities s3-results)
-                   :shots shots
-                   :execution-time-ms (- (System/currentTimeMillis)
-                                         (:submitted-at job-info))
-                   :task-arn task-arn
-                   :raw-results (:raw-results s3-results)
-                   :task-metadata (:task-metadata s3-results)
-                   :s3-location (:s3-location s3-results)})))
-            {:job-status :running
-             :job-id job-id
-             :message "Job not completed yet"})))
-      {:job-status :failed
-       :job-id job-id
-       :error-message "Job not found"}))
-
-  (cancel-job [_this job-id]
-            "Cancel a running job"
-            (if-let [job-info (get-in @state [:jobs job-id])]
-              (let [task-arn (:task-arn job-info)]
-                (try
-                  (let [response (aws/invoke client {:op :CancelQuantumTask
-                                                     :request {:quantumTaskArn task-arn}})]
-                    (if (:cognitect.anomalies/category response)
-                      :cannot-cancel
-                      (do
-                        (swap! state assoc-in [:jobs job-id :cancelled-at] (System/currentTimeMillis))
-                        :cancelled)))
-                  (catch Exception _e
-                    :cannot-cancel)))
-              :not-found))
-
-  (queue-status [_this]
-    "Get queue status information for the configured device"
-    (let [device-arn (or (:id (:current-device @backend-state))
-                         "arn:aws:braket:::device/quantum-simulator/amazon/sv1")]
-      (try
-        (let [response (aws/invoke client {:op :GetDevice
-                                           :request {:deviceArn device-arn}})]
-          (if (:cognitect.anomalies/category response)
-            {:error response}
-            (let [queue-info (:deviceQueueInfo response)]
-              {:device-arn device-arn
-               :queue-type (:queueType queue-info)
-               :queue-size (:queueSize queue-info)
-               :priority (:queuePriority queue-info)
-               :status (:deviceStatus response)})))
-        (catch Exception e
-          {:error {:message (.getMessage e) :type :api-error}}))))
+  (queue-status [this]
+    (queue-status this))
 
   ;; MultiDeviceBackend protocol implementation  
   backend/MultiDeviceBackend
-  (devices [_this]
-    "List all available Braket devices (returns collection as per protocol)"
-    (let [devices (braket-devices client)]
-      (swap! backend-state assoc :devices devices)
-      devices))
+  (devices [this]
+    (devices this))
 
-  (select-device [_this device]
-    (let [device (if (string? device)
-                   (some (fn [d] (when (= (:id d) device) d))
-                         (:devices @backend-state))
-                   device)]
-      (swap! backend-state assoc :current-device device)
-      (:current-device @backend-state)))
+  (select-device [this device]
+    (select-device this device))
 
   ;; CloudQuantumBackend protocol implementation  
   backend/CloudQuantumBackend
-  (authenticate [_this _credentials]
-    "AWS Braket uses AWS credentials, not separate authentication"
-    {:status :authenticated
-     :region (:region config)
-     :authenticated-at (System/currentTimeMillis)})
+  (authenticate [this _credentials]
+    (authenticate this))
 
-  (session-info [_this]
-    {:status :authenticated
-     :session-id (str "braket-session-" (java.util.UUID/randomUUID))
-     :region (:region config)
-     :device-arn (:device-arn config)
-     :active-jobs (count (get-in @state [:jobs]))
-     :active-batches (count (get-in @state [:batches]))
-     :session-start (System/currentTimeMillis)})
+  (session-info [this]
+    (session-info this))
 
   (estimate-cost [this circuits options]
-    (let [device-arn (or (:id (:current-device @backend-state))
-                         "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
-          shots (get options :shots 1000)
-          circuit-count (if (sequential? circuits) (count circuits) 1)
-          total-shots (* circuit-count shots)
-          device-type (if (str/includes? device-arn "simulator") :simulator :quantum)
-          region (:region config "us-east-1")
-          pricing-data (braket-pricing this device-type region)
-          base-cost (:price-per-task pricing-data)
-          shot-cost (:price-per-shot pricing-data)
-          circuit-complexity (get (if (sequential? circuits) (first circuits) circuits) :gate-count 10)
-          ;; Enhanced: Apply provider-specific pricing multiplier
-          device-info (parse-device-info device-arn)
-          provider-multiplier (if device-info
-                                (provider-pricing-multiplier (:provider device-info))
-                                1.0)
-          adjusted-base-cost (* base-cost provider-multiplier)
-          adjusted-shot-cost (* shot-cost provider-multiplier)]
-      {:total-cost (+ (* circuit-count adjusted-base-cost)
-                      (* total-shots adjusted-shot-cost))
-       :currency (:currency pricing-data)
-       :cost-breakdown {:base-cost-per-task adjusted-base-cost
-                        :shot-cost-per-shot adjusted-shot-cost
-                        :total-tasks circuit-count
-                        :total-shots total-shots
-                        :task-cost (* circuit-count adjusted-base-cost)
-                        :shot-cost (* total-shots adjusted-shot-cost)
-                        :provider-multiplier provider-multiplier
-                        :original-base-cost base-cost
-                        :original-shot-cost shot-cost
-                        :device-type device-type
-                        :provider (get device-info :provider :unknown)
-                        :complexity-factor circuit-complexity}
-       ;; legacy fields retained for convenience
-       :estimated-cost-usd (+ (* circuit-count adjusted-base-cost)
-                              (* total-shots adjusted-shot-cost))
-       :pricing-source (:source pricing-data)
-       :last-updated (:last-updated pricing-data)}))
+    (estimate-cost this circuits options))
 
   backend/BatchJobBackend
   (batch-status [this batch-id]
-    "Get status of a batch operation"
     (if-let [batch-info (get-in @(:state this) [:batches batch-id])]
       (let [job-statuses (doall (map #(backend/job-status this %) (:job-ids batch-info)))
             completed (count (filter #(= :completed %) job-statuses))
@@ -644,7 +694,6 @@
       {:error "Batch not found"}))
 
   (batch-results [this batch-id]
-    "Get results of a completed batch"
     (if-let [batch-info (get-in @backend-state [:batches batch-id])]
       (let [job-ids (:job-ids batch-info)
             results (map #(backend/job-result this %) job-ids)]
@@ -655,7 +704,6 @@
       {:error "Batch not found"}))
 
   (batch-submit [this circuits options]
-    "Submit multiple circuits as a batch"
     (let [batch-id (str "batch-" (java.util.UUID/randomUUID))
           max-parallel (get-in (:config this) [:max-parallel-shots] 10)
           chunks (partition-all max-parallel circuits)]
@@ -718,6 +766,7 @@
   ([]
    (create-braket-backend {}))
   ([config]
+   ;; TODO generate clientToken, if not provided
    (when (nil? (:s3-bucket config))
      (throw (ex-info "S3 bucket is required for Braket backend. AWS Braket stores all quantum task results in S3."
                      {:type :missing-s3-bucket
@@ -782,10 +831,14 @@
   (require '[org.soulspace.qclojure.domain.circuit :as circuit])
 
   ;; First create a braket backend instance
-  (def backend (create-braket-simulator {:s3-bucket "my-braket-results-bucket"}))
+  (def backend (create-braket-simulator {:s3-bucket "amazon-braket-results-1207"}))
+
+  ;; Enable request validation for debugging
+  (aws/validate-requests (:client backend) false)
 
   ;; Create a Bell state circuit
-  (def bell-circuit (circuit/bell-state-circuit))
+  (def bell-circuit (-> (circuit/bell-state-circuit)
+                        (circuit/measure-all-operation)))
 
   (backend/devices backend)
   (backend/select-device backend "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
@@ -806,11 +859,16 @@
     (Thread/sleep 20000)
     (println "Job result:" (backend/job-result backend job-id)))
 
+  (println "Job status:" (job-status backend "braket-5f554d1a-9c28-4536-a2e0-0667ddd17227")) 
+  (println "Job result:" (job-result backend "braket-5f554d1a-9c28-4536-a2e0-0667ddd17227")) 
+
   (slurp "dev/req.json")
-  
+  (aws/doc (:client backend) :CreateQuantumTask)
+
   (let [response (aws/invoke (:client backend) {:op :CreateQuantumTask :request (slurp "dev/req.json")})]
-    (println "CreateQuantumTask response:" response)
-    )
+    (println "CreateQuantumTask response:" response))
+
+
 
 
   ;
