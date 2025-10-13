@@ -407,14 +407,14 @@
 (defn submit-circuit
   [backend circuit options]
   (let [device (:current-device @backend-state)
-
+        options (assoc options :target :braket)
         ;; Apply hardware optimization if requested
         optimization-result (hwopt/optimize circuit device options)
 
         optimized-circuit (:circuit optimization-result)
 
         ;; Transform circuit to QASM3 format for Braket
-        qasm3-circuit (qasm3/circuit-to-qasm optimized-circuit)
+        qasm3-circuit (qasm3/circuit-to-qasm optimized-circuit options)
         action (json/write-str {:braketSchemaHeader {:name "braket.ir.openqasm.program"
                                                      :version "1"}
                                 :source qasm3-circuit})
