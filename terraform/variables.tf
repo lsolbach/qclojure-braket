@@ -18,7 +18,7 @@ variable "aws_profile" {
 variable "bucket_name" {
   description = "Name of the S3 bucket used for Braket output (must be globally unique)"
   type        = string
-  default     = "my-braket-results-bucket"  # Align with documentation examples
+  default     = "amazon-braket-results-bucket"  # Align with documentation examples
 
   validation {
     condition = can(regex("^[a-z0-9][a-z0-9-]*[a-z0-9]$", var.bucket_name)) && length(var.bucket_name) >= 3 && length(var.bucket_name) <= 63

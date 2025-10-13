@@ -2,7 +2,7 @@
 # Copy this file to terraform.tfvars and customize for your environment
 
 # Basic Configuration
-bucket_name = "my-braket-results-bucket"  # Must be globally unique
+bucket_name = "amazon-braket-results-bucket"  # Must be globally unique
 environment = "dev"                       # dev, staging, or prod
 aws_region  = "us-east-1"                # Most Braket devices are in us-east-1
 
