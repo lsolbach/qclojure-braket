@@ -150,6 +150,7 @@
       {:error {:message (.getMessage e)
                :type :pricing-api-error}})))
 
+; TODO replace atoms
 (defn- parse-braket-pricing
   "Parse Braket pricing from AWS Pricing API response"
   [pricing-products device-type]
@@ -565,7 +566,7 @@
     (:current-device @backend-state)))
 
 ;;;
-;;; Cloud Backend Management Functions
+;;; Cloud Backend Functions
 ;;;
 (defn authenticate
   [backend]
@@ -627,7 +628,7 @@
      :last-updated (:last-updated pricing-data)}))
 
 ;;;
-;;; Batch Job Management Functions
+;;; Batch Job Functions
 ;;;
 (defn batch-status
   [backend batch-id]
@@ -695,7 +696,6 @@
 ;;;
 ;;; BraketBackend Implementation
 ;;;
-; TODO add state field to backend. Will contain an atom with the backend state.
 (defrecord BraketBackend [client s3-client pricing-client config state session-info]
   ;; Basic backend info
   Object
@@ -799,13 +799,16 @@
    (let [merged-config (merge {:region "us-east-1"
                                :shots 1000
                                :max-parallel-shots 10
-                               :device-type :simulator
                                :s3-key-prefix "braket-results/"}
                               config)
          client (create-braket-client merged-config)
          s3-client (create-s3-client merged-config)
          pricing-client (create-pricing-client merged-config)
-         initial-state (atom {:jobs {}
+         initial-state (atom {:job-counter 0
+                              :active-jobs {}
+                              :devices []
+                              :current-device nil}
+                             #_{:jobs {}
                               :batches {}
                               :devices-cache nil
                               :last-devices-refresh nil
@@ -891,9 +894,6 @@
 
   (let [response (aws/invoke (:client backend) {:op :CreateQuantumTask :request (slurp "dev/req.json")})]
     (println "CreateQuantumTask response:" response))
-
-
-
 
   ;
   )
