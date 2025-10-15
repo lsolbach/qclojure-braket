@@ -869,7 +869,7 @@
 
   (backend/devices backend)
   (backend/select-device backend "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
-  (backend/select-device backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-1")
+  (backend/select-device backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-Enterprise-1")
   (backend/device backend)
 
   ;; Test QPU pricing
@@ -886,8 +886,8 @@
     (Thread/sleep 20000)
     (println "Job result:" (backend/job-result backend job-id)))
 
-  (println "Job status:" (job-status backend "braket-5f554d1a-9c28-4536-a2e0-0667ddd17227")) 
-  (println "Job result:" (job-result backend "braket-5f554d1a-9c28-4536-a2e0-0667ddd17227")) 
+  (println "Job status:" (job-status backend "braket-5839488b-b7f7-46ac-a3b1-23ebf4d40b48")) 
+  (println "Job result:" (job-result backend "braket-5839488b-b7f7-46ac-a3b1-23ebf4d40b48")) 
 
   (slurp "dev/req.json")
   (aws/doc (:client backend) :CreateQuantumTask)
