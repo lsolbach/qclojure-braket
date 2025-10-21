@@ -261,7 +261,7 @@
                :bucket bucket
                :key key}})))
 
-(defn- braket-result-to-qclojure
+(defn- convert-braket-results
   "Convert Braket task result to QClojure result format.
    
    Parameters:
@@ -400,6 +400,30 @@
            :provider (keyword provider)
            :device-name device-name
            :arn device-arn})))))
+
+(defn- device-info
+  "Get device information from device ARN"
+  ([backend]
+   (device-info backend (get-in @backend-state [:current-device :id])))
+  ([backend device-arn]
+   (println "Fetching device from AWS Braket...")
+   (let [response (aws/invoke (:client backend) {:op :GetDevice
+                                                 :request {:deviceArn device-arn}})]
+     (println "GetDevice response:" response)
+     (if (:cognitect.anomalies/category response)
+       {:error response}
+       (let [capabilities (json/read-str (:deviceCapabilities response) {:key-fn keyword})]
+         (assoc response :capabilities capabilities))))))
+
+(defn- quantum-task
+  "Get quantum task details from AWS Braket"
+  [backend task-arn]
+  (let [response (aws/invoke (:client backend) {:op :GetQuantumTask
+                                                :request {:quantumTaskArn task-arn}})]
+    (println "GetQuantumTask response:" response)
+    (if (:cognitect.anomalies/category response)
+      {:error response}
+      response)))
 
 (defn braket-device
   [braket-device]
@@ -615,7 +639,7 @@
                                    :s3-location (:s3-location s3-results)}
                     _ (spit (str job-id "-braket-result.edn") braket-result)
                     ;; Convert to QClojure format
-                    result (braket-result-to-qclojure braket-result job-info)
+                    result (convert-braket-results braket-result job-info)
                     _ (spit (str job-id "-result.edn") result)
                     ]
                 result)))
@@ -969,7 +993,6 @@
 
 (comment
   ;; REPL experimentation and testing
-  (require '[org.soulspace.qclojure.domain.circuit :as circuit])
 
   ;; First create a braket backend instance
   (def backend (create-braket-simulator {:s3-bucket "amazon-braket-results-1207"}))
@@ -986,6 +1009,12 @@
   (backend/select-device backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-1")
   (backend/select-device backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-Enterprise-1")
   (backend/device backend)
+  (device-info backend)
+  (spit "SV1.edn" (device-info backend "arn:aws:braket:::device/quantum-simulator/amazon/sv1"))
+  (spit "Forte-1.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-1"))
+  (spit "Forte-Enterprise-1.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-Enterprise-1"))
+
+  (quantum-task backend "arn:aws:braket:us-east-1:579360542232:quantum-task/d02cb431-1820-4ad4-bf49-76441d0ee945")
 
   ;; Test QPU pricing
   (backend/estimate-cost backend bell-circuit {:shots 1000})
@@ -1012,7 +1041,7 @@
   (println "Job status:" (job-status backend "braket-327a3bc1-049f-4593-a7a2-59236c3b1bd1"))
   (println "Job result:" (job-result backend "braket-327a3bc1-049f-4593-a7a2-59236c3b1bd1"))
   (println "Job status:" (cancel-job backend "braket-327a3bc1-049f-4593-a7a2-59236c3b1bd1"))
-  
+
   (slurp "dev/req.json")
   (aws/doc (:client backend) :CreateQuantumTask)
 
@@ -1028,7 +1057,7 @@
      :submitted-at 1760536661569
      :options {:shots 10}})
 
-  (braket-result-to-qclojure sample-braket-result sample-job-info)
+  (convert-braket-results sample-braket-result sample-job-info)
   ;; Should produce:
   ;; {:job-status :completed
   ;;  :job-id "braket-5839488b-b7f7-46ac-a3b1-23ebf4d40b48"
