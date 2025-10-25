@@ -1005,14 +1005,24 @@
                         (circuit/measure-all-operation)))
 
   (backend/devices backend)
+  (map :id (:devices @backend-state))
+
   (backend/select-device backend "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
+  (backend/select-device backend "arn:aws:braket:::device/quantum-simulator/amazon/dm1")
+  (backend/select-device backend "arn:aws:braket:::device/quantum-simulator/amazon/tn1")
   (backend/select-device backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-1")
   (backend/select-device backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-Enterprise-1")
+  (backend/select-device backend "arn:aws:braket:us-east-1::device/qpu/ionq/Aria-1")
+  (backend/select-device backend "arn:aws:braket:us-east-1::device/qpu/quera/Aquila")
+
+  (backend/available? backend)
+
   (backend/device backend)
   (device-info backend)
   (spit "SV1.edn" (device-info backend "arn:aws:braket:::device/quantum-simulator/amazon/sv1"))
   (spit "Forte-1.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-1"))
   (spit "Forte-Enterprise-1.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-Enterprise-1"))
+
 
   (quantum-task backend "arn:aws:braket:us-east-1:579360542232:quantum-task/d02cb431-1820-4ad4-bf49-76441d0ee945")
 
@@ -1020,8 +1030,6 @@
   (backend/estimate-cost backend bell-circuit {:shots 1000})
 
   ;; (backend/calibration-data backend "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
-
-  (backend/available? backend)
 
   (def options {:shots 10
                 :result-specs {;:probability {:targets [[0 0] [1 1]]},
