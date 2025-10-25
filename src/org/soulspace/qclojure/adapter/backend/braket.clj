@@ -993,6 +993,8 @@
 
 (comment
   ;; REPL experimentation and testing
+  ;; To use this code, ensure you have the necessary AWS credentials configured
+  ;; and replace the S3 bucket name with your own.
 
   ;; First create a braket backend instance
   (def backend (create-braket-simulator {:s3-bucket "amazon-braket-results-1207"}))
