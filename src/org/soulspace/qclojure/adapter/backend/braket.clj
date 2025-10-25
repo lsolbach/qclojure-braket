@@ -997,7 +997,8 @@
   ;; First create a braket backend instance
   (def backend (create-braket-simulator {:s3-bucket "amazon-braket-results-1207"}))
 
-  ;; Enable request validation for debugging
+  ;; Enable/disable request validation for debugging
+  (aws/validate-requests (:client backend) true)
   (aws/validate-requests (:client backend) false)
 
   ;; Create a Bell state circuit
@@ -1013,7 +1014,10 @@
   (backend/select-device backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-1")
   (backend/select-device backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-Enterprise-1")
   (backend/select-device backend "arn:aws:braket:us-east-1::device/qpu/ionq/Aria-1")
+  (backend/select-device backend "arn:aws:braket:us-east-1::device/qpu/ionq/Aria-2")
+  (backend/select-device backend "arn:aws:braket:us-east-1::device/qpu/ionq/Harmony")
   (backend/select-device backend "arn:aws:braket:us-east-1::device/qpu/quera/Aquila")
+  (backend/select-device backend "arn:aws:braket:us-east-1::device/qpu/xanadu/Borealis")
 
   (backend/available? backend)
 
