@@ -408,11 +408,13 @@
   ([backend device-arn]
    (println "Fetching device from AWS Braket...")
    (let [response (aws/invoke (:client backend) {:op :GetDevice
-                                                 :request {:deviceArn device-arn}})]
-     (println "GetDevice response:" response)
+                                                 :request {:deviceArn device-arn}})
+         _ (println "GetDevice response:" response)
+         _ (println "Keys:" (keys response))]
      (if (:cognitect.anomalies/category response)
        {:error response}
-       (let [capabilities (json/read-str (:deviceCapabilities response) {:key-fn keyword})]
+       (let [capabilities (json/read-str (:deviceCapabilities response) {:key-fn keyword})
+             _ (println "Device capabilities:" capabilities)]
          (assoc response :capabilities capabilities))))))
 
 (defn- quantum-task
@@ -998,6 +1000,8 @@
 
   ;; First create a braket backend instance
   (def backend (create-braket-simulator {:s3-bucket "amazon-braket-results-1207"}))
+  (def backend (create-braket-simulator {:s3-bucket "amazon-braket-results-1207"
+                                         :region "eu-north-1"}))
 
   ;; Enable/disable request validation for debugging
   (aws/validate-requests (:client backend) true)
@@ -1020,15 +1024,17 @@
   (backend/select-device backend "arn:aws:braket:us-east-1::device/qpu/ionq/Harmony")
   (backend/select-device backend "arn:aws:braket:us-east-1::device/qpu/quera/Aquila")
   (backend/select-device backend "arn:aws:braket:us-east-1::device/qpu/xanadu/Borealis")
+  (backend/select-device backend "arn:aws:braket:eu-north-1::device/qpu/iqm/Garnet")
+  (backend/select-device backend "arn:aws:braket:eu-north-1::device/qpu/iqm/Emerald")
 
   (backend/available? backend)
 
   (backend/device backend)
   (device-info backend)
+
   (spit "SV1.edn" (device-info backend "arn:aws:braket:::device/quantum-simulator/amazon/sv1"))
   (spit "Forte-1.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-1"))
   (spit "Forte-Enterprise-1.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-Enterprise-1"))
-
 
   (quantum-task backend "arn:aws:braket:us-east-1:579360542232:quantum-task/d02cb431-1820-4ad4-bf49-76441d0ee945")
 
