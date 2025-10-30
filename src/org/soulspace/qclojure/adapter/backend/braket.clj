@@ -995,13 +995,14 @@
 
 (comment
   ;; REPL experimentation and testing
+
   ;; To use this code, ensure you have the necessary AWS credentials configured
   ;; and replace the S3 bucket name with your own.
 
   ;; First create a braket backend instance
-  (def backend (create-braket-simulator {:s3-bucket "amazon-braket-results-1207"}))
-  (def backend (create-braket-simulator {:s3-bucket "amazon-braket-results-1207"
-                                         :region "eu-north-1"}))
+  (def backend (create-braket-backend {:s3-bucket "amazon-braket-results-1207"}))
+  (def backend (create-braket-backend {:s3-bucket "amazon-braket-results-1207"
+                                       :region "eu-north-1"}))
 
   ;; Enable/disable request validation for debugging
   (aws/validate-requests (:client backend) true)
@@ -1035,6 +1036,12 @@
   (spit "SV1.edn" (device-info backend "arn:aws:braket:::device/quantum-simulator/amazon/sv1"))
   (spit "Forte-1.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-1"))
   (spit "Forte-Enterprise-1.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-Enterprise-1"))
+  (spit "Aria-1.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Aria-1"))
+  (spit "Aria-2.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Aria-2"))
+  (spit "Aquila.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/quera/Aquila"))
+  (spit "Borealis.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/xanadu/Borealis"))
+  (spit "Garnet.edn" (device-info backend "arn:aws:braket:eu-north-1::device/qpu/iqm/Garnet"))
+  (spit "Emerald.edn" (device-info backend "arn:aws:braket:eu-north-1::device/qpu/iqm/Emerald"))
 
   (quantum-task backend "arn:aws:braket:us-east-1:579360542232:quantum-task/d02cb431-1820-4ad4-bf49-76441d0ee945")
 
@@ -1058,9 +1065,10 @@
     (Thread/sleep 20000)
     (println "Job result:" (backend/job-result backend job-id)))
 
-  (println "Job status:" (job-status backend "braket-327a3bc1-049f-4593-a7a2-59236c3b1bd1"))
-  (println "Job result:" (job-result backend "braket-327a3bc1-049f-4593-a7a2-59236c3b1bd1"))
-  (println "Job status:" (cancel-job backend "braket-327a3bc1-049f-4593-a7a2-59236c3b1bd1"))
+  (println "Job status:" (job-status backend "braket-eb08fdb1-cf31-4ae7-84b1-7ec31b6ac208"))
+  (println "Job result:" (job-result backend "braket-eb08fdb1-cf31-4ae7-84b1-7ec31b6ac208"))
+  ;; Cancel job
+  (println "Job status:" (cancel-job backend ""))
 
   (slurp "dev/req.json")
   (aws/doc (:client backend) :CreateQuantumTask)
