@@ -9,6 +9,7 @@
                  [com.cognitect.aws/braket    "871.2.32.25"]
                  [com.cognitect.aws/pricing   "871.2.32.2"]
                  [com.cognitect.aws/iam       "871.2.32.2"]
+                 [zprint/zprint               "1.3.0"]
                  [org.soulspace/qclojure      "0.24.0-SNAPSHOT"]]
 
   :scm {:name "git" :url "https://github.com/lsolbach/qclojure-braket"}
