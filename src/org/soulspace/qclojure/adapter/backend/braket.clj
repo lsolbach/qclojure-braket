@@ -9,6 +9,7 @@
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.data.json :as json]
+            [zprint.core :as zp]
             [cognitect.aws.client.api :as aws]
             [org.soulspace.qclojure.application.format.qasm3 :as qasm3]
             [org.soulspace.qclojure.application.backend :as backend]
@@ -38,6 +39,22 @@
 (s/def ::pricing-data
   (s/keys :req-un [::price-per-task ::price-per-shot ::currency]
           :opt-un [::last-updated ::device-type]))
+
+;;;
+;;; EDN formatting
+;;;
+(def format-options
+  {:style :respect-bl
+   :map {:comma? false
+         :force-nl? true
+         :sort? true
+         :key-order [:id :name :provider :type]}})
+
+
+(defn format-edn
+  "Format a Clojure data structure as a pretty-printed EDN string."
+  [data]
+  (zp/zprint-file-str data "braket" format-options))
 
 ;;;
 ;;; AWS Braket Client Configuration  
@@ -260,6 +277,36 @@
                :type :s3-error
                :bucket bucket
                :key key}})))
+
+(defn convert-simulator-result
+  "Convert Braket simulator result to QClojure result format.
+   
+   Parameters:
+   - braket-result: Raw result from job-result function
+   - job-info: Job info from backend state containing circuit and options
+   
+   Returns:
+   QClojure formatted result map"
+  [braket-result job-info]
+  ;; TODO implement simulator result conversion
+  (let [raw-results (:raw-results braket-result)]
+    )
+  )
+
+(defn convert-qpu-result
+  "Convert Braket QPU result to QClojure result format.
+   
+   Parameters:
+   - braket-result: Raw result from job-result function
+   - job-info: Job info from backend state containing circuit and options
+   
+   Returns:
+   QClojure formatted result map"
+  [braket-result job-info]
+  ;; TODO implement QPU result conversion
+  (let [raw-results (:raw-results braket-result)]
+    ) 
+  )
 
 (defn- convert-braket-results
   "Convert Braket task result to QClojure result format.
