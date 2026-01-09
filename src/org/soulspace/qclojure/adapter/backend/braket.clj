@@ -10,8 +10,8 @@
             [clojure.java.io :as io]
             [clojure.data.json :as json]
             [zprint.core :as zp]
-;            [camel-snake-kebab.core :as csk]
-;            [camel-snake-kebab.extras :as cske]
+            [camel-snake-kebab.core :as csk]
+            [camel-snake-kebab.extras :as cske]
             [cognitect.aws.client.api :as aws]
             [org.soulspace.qclojure.application.format.qasm3 :as qasm3]
             [org.soulspace.qclojure.application.backend :as backend]
@@ -53,9 +53,32 @@
          :key-order [:id :name :provider :type]}})
 
 (defn format-edn
-  "Format a Clojure data structure as a pretty-printed EDN string."
+  "Format a Clojure data structure as a pretty-printed EDN string.
+   
+   Parameters:
+   - data: data to format"
   [data]
-  (zp/zprint-file-str data "braket" format-options))
+  (binding [*print-length* nil
+            *print-level* nil]
+    (zp/zprint-file-str (prn-str data) "braket" format-options)))
+
+(comment ;; Test result formatting
+  (def braket-result
+    (->> "generated/results/braket-7b8c9b30-d296-4ac0-935c-bd5346b04162-result.edn"
+         (slurp)
+         (edn/read-string)
+         (cske/transform-keys csk/->kebab-case-keyword)))
+
+  (cske/transform-keys csk/->kebab-case-keyword braket-result)
+
+  (println (format-edn braket-result))
+  ;
+  )
+
+(defn save-edn
+  "Save a Clojure data structure as a pretty-printed EDN file."
+  [filepath data]
+  (spit filepath (format-edn data)))
 
 ;;;
 ;;; AWS Braket Client Configuration  
@@ -369,7 +392,7 @@
   "Parse Braket quantum task results from JSON"
   [results-json]
   (try
-    (let [results (json/read-str results-json :key-fn keyword)
+    (let [results (json/read-str results-json :key-fn csk/->kebab-case-keyword)
           measurements (:measurements results)
           measurement-counts (:measurementCounts results)
           measurement-probabilities (:measurementProbabilities results)]
