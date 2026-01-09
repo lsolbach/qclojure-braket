@@ -2,16 +2,16 @@
   :description "Provides an Amazon Braket Backend for QClojure"
   :license {:name "Eclipse Public License 1.0"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
-  :dependencies [[org.clojure/clojure                 "1.12.3"]
+  :dependencies [[org.clojure/clojure                 "1.12.4"]
                  [com.cognitect.aws/api               "0.8.774"]
-                 [com.cognitect.aws/endpoints         "871.2.38.3"]
-                 [com.cognitect.aws/s3                "871.2.37.4"]
-                 [com.cognitect.aws/braket            "871.2.38.3"]
+                 [com.cognitect.aws/endpoints         "871.2.41.2"]
+                 [com.cognitect.aws/s3                "871.2.40.9"]
+                 [com.cognitect.aws/braket            "871.2.39.3"]
                  [com.cognitect.aws/pricing           "871.2.32.2"]
-                 [com.cognitect.aws/iam               "871.2.38.3"]
+                 [com.cognitect.aws/iam               "871.2.40.4"]
                  [zprint/zprint                       "1.3.0"]
                  [camel-snake-kebab/camel-snake-kebab "0.4.3"]
-                 [org.soulspace/qclojure              "0.24.0-SNAPSHOT"]]
+                 [org.soulspace/qclojure              "0.24.0"]]
 
   :scm {:name "git" :url "https://github.com/lsolbach/qclojure-braket"}
   :deploy-repositories [["clojars" {:sign-releases false :url "https://clojars.org/repo"}]])
