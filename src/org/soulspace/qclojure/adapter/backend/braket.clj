@@ -9,14 +9,14 @@
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.data.json :as json]
-            [zprint.core :as zp]
             [camel-snake-kebab.core :as csk]
             [camel-snake-kebab.extras :as cske]
             [cognitect.aws.client.api :as aws]
             [org.soulspace.qclojure.application.format.qasm3 :as qasm3]
             [org.soulspace.qclojure.application.backend :as backend]
             [org.soulspace.qclojure.application.hardware-optimization :as hwopt]
-            [org.soulspace.qclojure.domain.circuit :as circuit]))
+            [org.soulspace.qclojure.domain.circuit :as circuit]
+            [org.soulspace.qclojure.adapter.backend.format :as fmt]))
 
 ;;;
 ;;; Specs for Data Validation
@@ -42,43 +42,28 @@
   (s/keys :req-un [::price-per-task ::price-per-shot ::currency]
           :opt-un [::last-updated ::device-type]))
 
-;;;
-;;; EDN formatting
-;;;
-(def format-options
-  {:style :respect-bl
-   :map {:comma? false
-         :force-nl? true
-         :sort? true
-         :key-order [:id :name :provider :type]}})
-
-(defn format-edn
-  "Format a Clojure data structure as a pretty-printed EDN string.
+(defn kebab-keys
+  "Convert all map keys to kebab-case keywords.
    
    Parameters:
-   - data: data to format"
-  [data]
-  (binding [*print-length* nil
-            *print-level* nil]
-    (zp/zprint-file-str (prn-str data) "braket" format-options)))
+   - m: input map
+   
+   Returns: map with kebab-case keyword keys"
+  [m]
+  (cske/transform-keys csk/->kebab-case-keyword m))
 
 (comment ;; Test result formatting
   (def braket-result
-    (->> "generated/results/braket-7b8c9b30-d296-4ac0-935c-bd5346b04162-result.edn"
+    (->> "generated/results/braket-f6c3d842-8e86-416c-a92c-9008ff57d8d7-result.edn"
          (slurp)
          (edn/read-string)
-         (cske/transform-keys csk/->kebab-case-keyword)))
+         (kebab-keys)))
 
-  (cske/transform-keys csk/->kebab-case-keyword braket-result)
+  (kebab-keys braket-result)
 
-  (println (format-edn braket-result))
+  (println (fmt/format-edn braket-result))
   ;
   )
-
-(defn save-edn
-  "Save a Clojure data structure as a pretty-printed EDN file."
-  [filepath data]
-  (spit filepath (format-edn data)))
 
 ;;;
 ;;; AWS Braket Client Configuration  
@@ -713,7 +698,7 @@
                     _ (spit (str job-id "-braket-result.edn") braket-result)
                     ;; Convert to QClojure format
                     result (convert-braket-results braket-result job-info)
-                    _ (spit (str job-id "-result.edn") result)
+                    _ (spit (str job-id "-result.edn") (fmt/format-edn result))
                     ]
                 result)))
           {:job-status :running
@@ -1066,10 +1051,10 @@
 
 (comment
   ;; REPL experimentation and testing
-
+  
   ;; To use this code, ensure you have the necessary AWS credentials configured
   ;; and replace the S3 bucket name with your own.
-
+  
   ;; First create a braket backend instance
   (def backend (create-braket-backend {:s3-bucket "amazon-braket-results-1207"}))
   (def backend (create-braket-backend {:s3-bucket "amazon-braket-results-1207"
@@ -1104,17 +1089,17 @@
   (backend/device backend)
   (device-info backend)
 
-  (save-edn "dev/devices/SV1.edn" (device-info backend "arn:aws:braket:::device/quantum-simulator/amazon/sv1"))
-  (save-edn "dev/devices/DM1.edn" (device-info backend "arn:aws:braket:::device/quantum-simulator/amazon/dm1"))
-  (save-edn "dev/devices/TN1.edn" (device-info backend "arn:aws:braket:::device/quantum-simulator/amazon/tn1"))
-  (save-edn "dev/devices/Forte-1.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-1"))
-  (save-edn "dev/devices/Forte-Enterprise-1.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-Enterprise-1"))
-  (save-edn "dev/devices/Aria-1.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Aria-1"))
-  (save-edn "dev/devices/Aria-2.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Aria-2"))
-  (save-edn "dev/devices/Aquila.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/quera/Aquila"))
-  (save-edn "dev/devices/Borealis.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/xanadu/Borealis"))
-  (save-edn "dev/devices/Garnet.edn" (device-info backend "arn:aws:braket:eu-north-1::device/qpu/iqm/Garnet"))
-  (save-edn "dev/devices/Emerald.edn" (device-info backend "arn:aws:braket:eu-north-1::device/qpu/iqm/Emerald"))
+  (fmt/save-formatted-edn "dev/devices/SV1.edn" (device-info backend "arn:aws:braket:::device/quantum-simulator/amazon/sv1"))
+  (fmt/save-formatted-edn "dev/devices/DM1.edn" (device-info backend "arn:aws:braket:::device/quantum-simulator/amazon/dm1"))
+  (fmt/save-formatted-edn "dev/devices/TN1.edn" (device-info backend "arn:aws:braket:::device/quantum-simulator/amazon/tn1"))
+  (fmt/save-formatted-edn "dev/devices/Forte-1.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-1"))
+  (fmt/save-formatted-edn "dev/devices/Forte-Enterprise-1.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-Enterprise-1"))
+  (fmt/save-formatted-edn "dev/devices/Aria-1.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Aria-1"))
+  (fmt/save-formatted-edn "dev/devices/Aria-2.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Aria-2"))
+  (fmt/save-formatted-edn "dev/devices/Aquila.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/quera/Aquila"))
+  (fmt/save-formatted-edn "dev/devices/Borealis.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/xanadu/Borealis"))
+  (fmt/save-formatted-edn "dev/devices/Garnet.edn" (device-info backend "arn:aws:braket:eu-north-1::device/qpu/iqm/Garnet"))
+  (fmt/save-formatted-edn "dev/devices/Emerald.edn" (device-info backend "arn:aws:braket:eu-north-1::device/qpu/iqm/Emerald"))
 
   (quantum-task backend "arn:aws:braket:us-east-1:579360542232:quantum-task/d02cb431-1820-4ad4-bf49-76441d0ee945")
 
@@ -1122,8 +1107,8 @@
   (backend/estimate-cost backend bell-circuit {:shots 1000})
 
   ;; (backend/calibration-data backend "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
-
-  (def options {:shots 10
+  
+  (def options {:shots 100
                 :result-specs {;:probability {:targets [[0 0] [1 1]]},
                                ;:amplitude {:basis-states [0 3]},
                                ;:state-vector true,
@@ -1138,8 +1123,9 @@
     (Thread/sleep 20000)
     (println "Job result:" (backend/job-result backend job-id)))
 
-  (println "Job status:" (job-status backend "braket-eb08fdb1-cf31-4ae7-84b1-7ec31b6ac208"))
-  (println "Job result:" (job-result backend "braket-eb08fdb1-cf31-4ae7-84b1-7ec31b6ac208"))
+  (println "Job status:" (job-status backend "braket-f6c3d842-8e86-416c-a92c-9008ff57d8d7"))
+  (println "Job result:" (job-result backend "braket-f6c3d842-8e86-416c-a92c-9008ff57d8d7"))
+
   ;; Cancel job
   (println "Job status:" (cancel-job backend ""))
 
@@ -1174,6 +1160,6 @@
   ;;            :s3-location {...}
   ;;            :task-metadata {...}
   ;;            :raw-results {...}}}
-
+  
   ;
   )
