@@ -1059,6 +1059,9 @@
   (def backend (create-braket-backend {:s3-bucket "amazon-braket-results-1207"}))
   (def backend (create-braket-backend {:s3-bucket "amazon-braket-results-1207"
                                        :region "eu-north-1"}))
+  
+  (require '[org.soulspace.qclojure.adapter.backend.ideal-simulator :as ideal])
+  (def backend (ideal/create-simulator))
 
   ;; Enable/disable request validation for debugging
   (aws/validate-requests (:client backend) true)
@@ -1143,7 +1146,7 @@
     {:original-circuit bell-circuit
      :submitted-at 1760536661569
      :options {:shots 10}})
-
+  
   (convert-braket-results sample-braket-result sample-job-info)
   ;; Should produce:
   ;; {:job-status :completed
