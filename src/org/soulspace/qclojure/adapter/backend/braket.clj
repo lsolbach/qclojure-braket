@@ -600,56 +600,6 @@
           :unknown)))
     :failed))
 
-#_(defn job-result
-  [backend job-id]
-  (if-let [job-info (get-in @backend-state [:jobs job-id])]
-    (let [task-arn (:task-arn job-info)
-          response (aws/invoke (:client backend) {:op :GetQuantumTask
-                                                  :request {:quantumTaskArn task-arn}})
-          _ (println "Job result response:" response)]
-      (if (:cognitect.anomalies/category response)
-        {:job-status :failed
-         :job-id job-id
-         :error-message (str "AWS error: " (pr-str response))}
-        (if (= "COMPLETED" (:status response))
-          ;; Retrieve actual results from S3
-          (let [s3-results (retrieve-task-results (:s3-client backend) response)
-                shots (get-in job-info [:options :shots] 0)]
-            (if (:error s3-results)
-              {:job-status :failed
-               :job-id job-id
-               :error-message (get-in s3-results [:error :message])}
-              (let [meas (:measurements s3-results)
-                    ;; Normalize to QClojure's :measurement-results map {"bitstring" count}
-                    measurement-results (cond
-                                          (map? meas) meas
-                                          (sequential? meas)
-                                          (->> meas
-                                               (map (fn [bits]
-                                                      (->> bits
-                                                           (map str)
-                                                           (apply str))))
-                                               (frequencies))
-                                          :else {})]
-                {:job-status :completed
-                 :job-id job-id
-                 :measurement-results measurement-results
-                 :probabilities (:probabilities s3-results)
-                 :shots shots
-                 :execution-time-ms (- (System/currentTimeMillis)
-                                       (:submitted-at job-info))
-                 :task-arn task-arn
-                 :raw-results (:raw-results s3-results)
-                 :task-metadata (:task-metadata s3-results)
-                 :s3-location (:s3-location s3-results)})))
-          {:job-status :running
-           :job-id job-id
-           :message "Job not completed yet"})))
-    {:job-status :failed
-     :job-id job-id
-     :error-message "Job not found"}))
-
-
 (defn job-result
   [backend job-id]
   (if-let [job-info (get-in @backend-state [:jobs job-id])]
