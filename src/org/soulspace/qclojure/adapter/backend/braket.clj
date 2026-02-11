@@ -16,7 +16,9 @@
             [org.soulspace.qclojure.application.backend :as backend]
             [org.soulspace.qclojure.application.hardware-optimization :as hwopt]
             [org.soulspace.qclojure.domain.circuit :as circuit]
-            [org.soulspace.qclojure.adapter.backend.format :as fmt]))
+            ; [org.soulspace.qclojure.domain.state :as state]
+            [org.soulspace.qclojure.adapter.backend.format :as fmt]
+            [org.soulspace.qclojure.adapter.backend.pricing :as pricing]))
 
 ;;;
 ;;; Specs for Data Validation
@@ -78,11 +80,6 @@
   {:api :s3
    :region "us-east-1"})
 
-(def ^:private default-pricing-config
-  "Default configuration for AWS Pricing client"
-  {:api :pricing
-   :region "us-east-1"}) ; Pricing API is available in us-east-1 and ap-south-1
-
 (defn create-braket-client
   "Creates an AWS Braket client with optional configuration overrides.
    
@@ -114,150 +111,9 @@
    (let [config (merge default-s3-config config-overrides)]
      (aws/client config))))
 
-(defn create-pricing-client
-  "Creates an AWS Pricing client with optional configuration overrides.
-   
-   Args:
-     config-overrides - Map of configuration overrides (optional)
-   
-   Returns:
-     AWS Pricing client instance
-     
-   Note:
-     The Pricing API is only available in us-east-1 and ap-south-1 regions"
-  ([]
-   (create-pricing-client {}))
-  ([config-overrides]
-   (let [config (merge default-pricing-config config-overrides)]
-     (aws/client config))))
-
 ;;;
 ;;; Multi-QPU Device Management Functions
 ;;;
-;; Pricing multipliers by provider (relative to base cost)
-(def ^:private provider-pricing-multipliers
-  "Cost multipliers for different QPU providers"
-  {:rigetti 1.2   ; Superconducting QPUs
-   :ionq 1.5      ; Trapped ion systems
-   :iqm 1.1       ; European superconducting 
-   :oqc 2.0       ; Photonic systems (premium)
-   :quera 0.8     ; Neutral atom (experimental pricing)
-   :amazon 1.0    ; Amazon's own devices
-   :simulator 0.1 ; Simulators are much cheaper
-   :default 1.0})
-
-(defn- provider-pricing-multiplier
-  "Get pricing multiplier for a specific provider"
-  [provider]
-  (get provider-pricing-multipliers
-       provider
-       (:default provider-pricing-multipliers)))
-
-;;
-;; AWS Pricing Functions
-;;
-(defn- query-braket-pricing
-  "Query AWS Pricing API for Braket service pricing"
-  [pricing-client service-code region _device-type]
-  (try
-    (let [filters [{:Type "TERM_MATCH"
-                    :Field "ServiceCode"
-                    :Value service-code}
-                   {:Type "TERM_MATCH"
-                    :Field "Location"
-                    :Value (or region "US East (N. Virginia)")}]
-          response (aws/invoke pricing-client {:op :GetProducts
-                                               :request {:ServiceCode service-code
-                                                         :Filters filters
-                                                         :MaxResults 100}})]
-      (if (:cognitect.anomalies/category response)
-        {:error response}
-        {:products (:PriceList response)}))
-    (catch Exception e
-      {:error {:message (.getMessage e)
-               :type :pricing-api-error}})))
-
-; TODO replace atoms
-(defn- parse-braket-pricing
-  "Parse Braket pricing from AWS Pricing API response"
-  [pricing-products device-type]
-  (try
-    (let [products (map #(json/read-str % :key-fn keyword) pricing-products)
-          task-pricing (atom {:price-per-task 0.0 :price-per-shot 0.0})
-          currency (atom "USD")]
-
-      (doseq [product products]
-        (let [product-attrs (:attributes (:product product))
-              pricing-dims (-> product :terms :OnDemand vals first :priceDimensions vals first)
-              price-per-unit (-> pricing-dims :pricePerUnit :USD)
-              unit (:unit pricing-dims)]
-
-          (when price-per-unit
-            (reset! currency "USD")
-            (cond
-              (and (= unit "Request")
-                   (str/includes? (str (:usagetype product-attrs)) "Task"))
-              (swap! task-pricing assoc :price-per-task (Double/parseDouble price-per-unit))
-
-              (and (= unit "Shot")
-                   (str/includes? (str (:usagetype product-attrs)) "Shot"))
-              (swap! task-pricing assoc :price-per-shot (Double/parseDouble price-per-unit))))))
-
-      {:price-per-task (:price-per-task @task-pricing)
-       :price-per-shot (:price-per-shot @task-pricing)
-       :currency @currency
-       :last-updated (System/currentTimeMillis)
-       :device-type device-type})
-
-    (catch Exception e
-      {:error {:message (.getMessage e)
-               :type :pricing-parse-error}})))
-
-(defn- braket-pricing
-  "Get cached or fresh pricing data for Braket services"
-  [backend device-type region]
-  (let [cache-key (str device-type "-" region)
-        cached-pricing (get-in @(:state backend) [:pricing-cache cache-key])
-        cache-age (when cached-pricing
-                    (- (System/currentTimeMillis) (:last-updated cached-pricing)))
-        cache-valid? (and cached-pricing (< cache-age (* 24 60 60 1000)))] ; 24 hours
-
-    (if cache-valid?
-      cached-pricing
-      ;; Fetch fresh pricing data
-      (if-let [pricing-client (:pricing-client backend)]
-        (let [service-code "AmazonBraket"
-              pricing-response (query-braket-pricing pricing-client service-code region device-type)]
-          (if (:error pricing-response)
-            ;; Fallback to estimated pricing on error
-            {:price-per-task (if (= device-type :simulator) 0.075 0.30)
-             :price-per-shot (if (= device-type :simulator) 0.0 0.00019)
-             :currency "USD"
-             :last-updated (System/currentTimeMillis)
-             :device-type device-type
-             :source :fallback}
-            (let [parsed-pricing (parse-braket-pricing (:products pricing-response) device-type)]
-              (if (:error parsed-pricing)
-                ;; Fallback on parse error
-                {:price-per-task (if (= device-type :simulator) 0.075 0.30)
-                 :price-per-shot (if (= device-type :simulator) 0.0 0.00019)
-                 :currency "USD"
-                 :last-updated (System/currentTimeMillis)
-                 :device-type device-type
-                 :source :fallback}
-                (do
-                  ;; Cache the successful result
-                  (swap! (:state backend) assoc-in [:pricing-cache cache-key]
-                         (assoc parsed-pricing :source :api))
-                  (assoc parsed-pricing :source :api))))))
-        ;; No pricing client, use fallback
-        {:price-per-task (if (= device-type :simulator) 0.075 0.30)
-         :price-per-shot (if (= device-type :simulator) 0.0 0.00019)
-         :currency "USD"
-         :last-updated (System/currentTimeMillis)
-         :device-type device-type
-         :source :fallback}))))
-
 ;;
 ;; S3 Result Retrieval Functions
 ;;
@@ -287,35 +143,142 @@
                :bucket bucket
                :key key}})))
 
-(defn convert-simulator-result
-  "Convert Braket simulator result to QClojure result format.
-   
-   Parameters:
-   - braket-result: Raw result from job-result function
-   - job-info: Job info from backend state containing circuit and options
-   
-   Returns:
-   QClojure formatted result map"
-  [braket-result job-info]
-  ;; TODO implement simulator result conversion
-  (let [raw-results (:raw-results braket-result)]
-    )
-  )
+; TODO: move to QClojure domain.state
+(defn bitstring-to-index
+  "Convert a bitstring like \"00\" or \"11\" to basis state index."
+  [bitstring num-qubits]
+  (reduce (fn [acc [idx bit]]
+            (+ acc (* (- (int bit) (int \0))
+                      (bit-shift-left 1 (- num-qubits idx 1)))))
+          0
+          (map-indexed vector bitstring)))
 
-(defn convert-qpu-result
-  "Convert Braket QPU result to QClojure result format.
+(defn convert-simulator-measurements
+  "Convert SV1 simulator measurements to QClojure format."
+  [measurements shots num-qubits]
+  (let [;; Convert bit vectors to basis state indices
+        outcomes (mapv (fn [measurement]
+                         (reduce (fn [acc [idx bit]]
+                                   (+ acc (* bit (bit-shift-left 1 (- num-qubits idx 1)))))
+                                 0
+                                 (map-indexed vector measurement)))
+                       measurements)
+
+        ;; Calculate frequencies
+        frequencies (clojure.core/frequencies outcomes)
+
+        ;; Calculate empirical probabilities
+        empirical-probs (into {}
+                              (map (fn [[outcome count]]
+                                     [outcome (/ count shots)])
+                                   frequencies))
+
+        ;; For hardware, theoretical = empirical
+        measurement-probs (mapv #(get empirical-probs % 0.0)
+                                (range (bit-shift-left 1 num-qubits)))]
+
+    {:measurement-outcomes outcomes
+     :measurement-probabilities measurement-probs
+     :empirical-probabilities empirical-probs
+     :shot-count shots
+     :measurement-qubits (range num-qubits)
+     :frequencies frequencies
+     :source :braket-hardware}))
+
+(defn convert-qpu-probabilities
+  "Convert QPU measurement probabilities to QClojure format."
+  [measurement-probs shots num-qubits]
+  (let [;; Convert keyword keys to string bitstrings
+        prob-map (into {}
+                      (map (fn [[k v]]
+                             [(name k) v])
+                           measurement-probs))
+        
+        ;; Convert to frequencies (multiply probabilities by shots)
+        frequencies (into {}
+                         (map (fn [[bitstring prob]]
+                                [(bitstring-to-index bitstring num-qubits)
+                                 (Math/round (* prob shots))])
+                              prob-map))
+        
+        ;; Empirical probabilities (same as input for QPU)
+        empirical-probs (into {}
+                             (map (fn [[bitstring prob]]
+                                    [(bitstring-to-index bitstring num-qubits) prob])
+                                  prob-map))
+        
+        ;; Generate measurement outcomes by sampling
+        outcomes (vec (mapcat (fn [[outcome count]]
+                               (repeat count outcome))
+                             frequencies))
+        
+        ;; For hardware, theoretical = empirical
+        measurement-probs-vec (mapv #(get empirical-probs % 0.0)
+                                   (range (bit-shift-left 1 num-qubits)))]
+    
+    {:measurement-outcomes outcomes
+     :measurement-probabilities measurement-probs-vec
+     :empirical-probabilities empirical-probs
+     :shot-count shots
+     :measurement-qubits (range num-qubits)
+     :frequencies frequencies
+     :source :braket-hardware}))
+
+(defn detect-device-type
+  "Detect whether results are from simulator or QPU.
+   
+   Heuristic:
+   - if we have raw measurement bit vectors, it's a simulator;
+   - if we have probabilities, it's a QPU.
    
    Parameters:
-   - braket-result: Raw result from job-result function
-   - job-info: Job info from backend state containing circuit and options
+   - raw-results: Raw results from Braket task (as parsed from JSON)
    
    Returns:
-   QClojure formatted result map"
-  [braket-result job-info]
-  ;; TODO implement QPU result conversion
-  (let [raw-results (:raw-results braket-result)]
-    ) 
-  )
+   :simulator, :qpu, or :unknown"
+  [raw-results]
+  (cond
+    (contains? raw-results :measurements)
+    :simulator
+
+    (contains? raw-results :measurement-probabilities)
+    :qpu
+
+    :else
+    :unknown))
+
+(defn convert-braket-measurement-results
+  "Convert Braket measurement results to QClojure format.
+   
+   Automatically detects device type and applies appropriate conversion.
+   
+   Parameters:
+   - raw-results: Raw results from Braket task (as parsed from JSON)
+   - shots: Number of shots executed
+   - num-qubits: Number of qubits in the circuit
+   
+   Returns:
+   Measurement results in QClojure format"
+  [raw-results shots num-qubits]
+  (let [device-type (detect-device-type raw-results)]
+    (case device-type
+      :simulator
+      (convert-simulator-measurements
+       (:measurements raw-results)
+       shots
+       num-qubits)
+
+      :qpu
+      (convert-qpu-probabilities
+       (or (:measurement-probabilities raw-results)
+           (:measurementProbabilities raw-results))
+       shots
+       num-qubits)
+
+      ;; Unknown format
+      (throw (ex-info "Unknown Braket result format"
+                      {:raw-results raw-results
+                       :device-type device-type})))))
 
 (defn- convert-braket-results
   "Convert Braket task result to QClojure result format.
@@ -328,50 +291,92 @@
    Result in QClojure format compatible with simulator backends"
   [braket-result job-info]
   (let [raw-results (:raw-results braket-result)
-        measurement-probs (:measurementProbabilities raw-results)
         shots (:shots braket-result)
-
-        ;; Convert probabilities to counts (frequencies)
-        ;; Braket gives us probabilities, but QClojure expects actual counts
-        measurement-counts (into {}
-                                 (map (fn [[bitstring prob]]
-                                        [(name bitstring)
-                                         (Math/round (* prob shots))])
-                                      measurement-probs))
-
-        ;; Extract circuit metadata
         circuit (:original-circuit job-info)
-        circuit-metadata (when circuit
-                           {:circuit-depth (circuit/circuit-depth circuit)
-                            :circuit-operation-count (circuit/circuit-operation-count circuit)
-                            :circuit-gate-count (circuit/circuit-gate-count circuit)})
+        num-qubits (:num-qubits circuit)
+
+        ;; Convert measurement results
+        measurement-results (convert-braket-measurement-results
+                             raw-results
+                             shots
+                             num-qubits)
 
         ;; Build QClojure-compatible result
         qclojure-result
         {:job-status :completed
          :job-id (:job-id braket-result)
          :circuit circuit
-         :circuit-metadata circuit-metadata
+         :circuit-metadata (when circuit
+                             {:circuit-depth (circuit/circuit-depth circuit)
+                              :circuit-operation-count (circuit/circuit-operation-count circuit)
+                              :circuit-gate-count (circuit/circuit-gate-count circuit)})
          :shots-executed shots
          :execution-time-ms (:execution-time-ms braket-result)
-         :results {:measurement-results measurement-counts
-                   :probabilities measurement-probs
-                   :empirical-probabilities measurement-probs  ; For hardware, these are the same
-                   :source :braket-hardware}}]
+         :results measurement-results}]
 
-    ;; Add optional fields if present
+    ;; Add optional fields
     (cond-> qclojure-result
       (:task-arn braket-result)
       (assoc-in [:results :task-arn] (:task-arn braket-result))
 
       (:s3-location braket-result)
-      (assoc-in [:results :s3-location] (:s3-location braket-result))
+      (assoc-in [:results :s3-location] (:s3-location braket-result)))))
 
-      (:task-metadata braket-result)
-      (assoc-in [:results :task-metadata] (:task-metadata braket-result))
+#_(defn- convert-braket-results
+    "Convert Braket task result to QClojure result format.
+   
+   Parameters:
+   - braket-result: Raw result from job-result function
+   - job-info: Job info from backend state containing circuit and options
+   
+   Returns:
+   Result in QClojure format compatible with simulator backends"
+    [braket-result job-info]
+    (let [raw-results (:raw-results braket-result)
+          measurement-probs (:measurementProbabilities raw-results)
+          shots (:shots braket-result)
 
-      (:raw-results braket-result)
-      (assoc-in [:results :raw-results] (:raw-results braket-result)))))
+          ;; Convert probabilities to counts (frequencies)
+          ;; Braket gives us probabilities, but QClojure expects actual counts
+          measurement-counts (into {}
+                                   (map (fn [[bitstring prob]]
+                                          [(name bitstring)
+                                           (Math/round (* prob shots))])
+                                        measurement-probs))
+
+          ;; Extract circuit metadata
+          circuit (:original-circuit job-info)
+          circuit-metadata (when circuit
+                             {:circuit-depth (circuit/circuit-depth circuit)
+                              :circuit-operation-count (circuit/circuit-operation-count circuit)
+                              :circuit-gate-count (circuit/circuit-gate-count circuit)})
+
+          ;; Build QClojure-compatible result
+          qclojure-result
+          {:job-status :completed
+           :job-id (:job-id braket-result)
+           :circuit circuit
+           :circuit-metadata circuit-metadata
+           :shots-executed shots
+           :execution-time-ms (:execution-time-ms braket-result)
+           :results {:measurement-results measurement-counts
+                     :probabilities measurement-probs
+                     :empirical-probabilities measurement-probs  ; For hardware, these are the same
+                     :source :braket-hardware}}]
+
+      ;; Add optional fields if present
+      (cond-> qclojure-result
+        (:task-arn braket-result)
+        (assoc-in [:results :task-arn] (:task-arn braket-result))
+
+        (:s3-location braket-result)
+        (assoc-in [:results :s3-location] (:s3-location braket-result))
+
+        (:task-metadata braket-result)
+        (assoc-in [:results :task-metadata] (:task-metadata braket-result))
+
+        (:raw-results braket-result)
+        (assoc-in [:results :raw-results] (:raw-results braket-result)))))
 
 (defn- parse-braket-results
   "Parse Braket quantum task results from JSON"
@@ -741,14 +746,14 @@
         total-shots (* circuit-count shots)
         device-type (if (str/includes? device-arn "simulator") :simulator :quantum)
         region (:region (:config backend) "us-east-1")
-        pricing-data (braket-pricing backend device-type region)
+        pricing-data (pricing/braket-pricing backend device-type region)
         base-cost (:price-per-task pricing-data)
         shot-cost (:price-per-shot pricing-data)
         circuit-complexity (get (if (sequential? circuits) (first circuits) circuits) :gate-count 10)
         ;; Enhanced: Apply provider-specific pricing multiplier
         device-info (parse-device-info device-arn)
         provider-multiplier (if device-info
-                              (provider-pricing-multiplier (:provider device-info))
+                              (pricing/provider-pricing-multiplier (:provider device-info))
                               1.0)
         adjusted-base-cost (* base-cost provider-multiplier)
         adjusted-shot-cost (* shot-cost provider-multiplier)]
@@ -949,7 +954,7 @@
                               config)
          client (create-braket-client merged-config)
          s3-client (create-s3-client merged-config)
-         pricing-client (create-pricing-client merged-config)
+         pricing-client (pricing/create-pricing-client merged-config)
          initial-state (atom {:job-counter 0
                               :active-jobs {}
                               :devices []
