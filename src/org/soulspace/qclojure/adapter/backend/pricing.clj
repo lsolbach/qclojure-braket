@@ -9,20 +9,20 @@
    unavailable."
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
-            [clojure.edn :as edn]
-            [clojure.java.io :as io]
             [clojure.data.json :as json]
-            [camel-snake-kebab.core :as csk]
-            [camel-snake-kebab.extras :as cske]
-            [cognitect.aws.client.api :as aws]
-            [org.soulspace.qclojure.application.backend :as backend]
-            [org.soulspace.qclojure.domain.circuit :as circuit]
-            [org.soulspace.qclojure.domain.state :as state]
-            [org.soulspace.qclojure.adapter.backend.format :as fmt]))
+            [cognitect.aws.client.api :as aws]))
 
-;;
-;; AWS Pricing Functions
-;;
+;;;
+;;; AWS Pricing Functions
+;;;
+
+;; Pricing specs
+(s/def ::price-per-task (s/double-in 0.0 1000.0))
+(s/def ::price-per-shot (s/double-in 0.0 1.0))
+(s/def ::currency string?)
+(s/def ::pricing-data
+  (s/keys :req-un [::price-per-task ::price-per-shot ::currency]
+          :opt-un [::last-updated ::device-type]))
 
 ;; Pricing multipliers by provider (relative to base cost)
 (def ^:private provider-pricing-multipliers

@@ -3,10 +3,26 @@
             [camel-snake-kebab.core :as csk]
             [camel-snake-kebab.extras :as cske]
             ))
+;;;
+;;; Formatting utilities for AWS data structures
+;;;
 
-;;;
-;;; EDN formatting
-;;;
+;;
+;; Key formatting
+;;
+(defn kebab-keys
+  "Convert all map keys to kebab-case keywords.
+   
+   Parameters:
+   - m: input map
+   
+   Returns: map with kebab-case keyword keys"
+  [m]
+  (cske/transform-keys csk/->kebab-case-keyword m))
+
+;;
+;; EDN formatting
+;;
 (def format-options
   "Zprint formatting options for EDN output"
   {:style :respect-bl
