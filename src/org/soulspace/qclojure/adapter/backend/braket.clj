@@ -24,7 +24,7 @@
 (s/def ::device-arn string?)
 (s/def ::region string?)
 (s/def ::max-parallel-shots pos-int?)
-(s/def ::device-type #{:quantum :simulator})
+(s/def ::device-type #{:quantum :simulator}) ; TODO consolidate keywords
 
 ;; S3 and result specs
 (s/def ::client-token string?)
@@ -75,6 +75,8 @@
 ;;;
 ;;; Backend State Management
 ;;;
+
+;; TODO: Consolidate state management, e.g. only use backend record state.
 (defonce backend-state
   (atom {:job-counter 0
          :active-jobs {}

@@ -142,6 +142,7 @@
      :frequencies frequencies
      :source :braket-hardware}))
 
+; TODO consolidate keywords
 (defn detect-device-type
   "Detect whether results are from simulator or QPU.
    
