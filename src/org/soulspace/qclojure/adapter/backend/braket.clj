@@ -5,7 +5,6 @@
    quantum computing services, supporting both simulators and quantum hardware
    devices."
   (:require [clojure.spec.alpha :as s]
-            [clojure.string :as str]
             [clojure.edn :as edn]
             [clojure.data.json :as json]
             [cognitect.aws.client.api :as aws]
@@ -13,7 +12,7 @@
             [org.soulspace.qclojure.application.backend :as backend]
             [org.soulspace.qclojure.application.hardware-optimization :as hwopt]
             [org.soulspace.qclojure.domain.circuit :as circuit]
-            [org.soulspace.qclojure.adapter.backend.format :as fmt] 
+            [org.soulspace.qclojure.adapter.backend.format :as fmt]
             [org.soulspace.qclojure.adapter.backend.device :as device]
             [org.soulspace.qclojure.adapter.backend.task :as task]
             [org.soulspace.qclojure.adapter.backend.pricing :as pricing]))
@@ -24,7 +23,7 @@
 (s/def ::device-arn string?)
 (s/def ::region string?)
 (s/def ::max-parallel-shots pos-int?)
-(s/def ::device-type #{:quantum :simulator}) ; TODO consolidate keywords
+(s/def ::device-type #{:qpu :simulator})
 
 ;; S3 and result specs
 (s/def ::client-token string?)
@@ -75,65 +74,15 @@
 ;;;
 ;;; Backend State Management
 ;;;
-
-;; TODO: Consolidate state management, e.g. only use backend record state.
-(defonce backend-state
-  (atom {:job-counter 0
-         :active-jobs {}
-         :devices []
-         :current-device nil}))
-
-(defn- device-info
-  "Get device information from device ARN"
-  ([backend]
-   (device-info backend (get-in @backend-state [:current-device :id])))
-  ([backend device-arn]
-   (println "Fetching device from AWS Braket...")
-   (let [response (aws/invoke (:client backend) {:op :GetDevice
-                                                 :request {:deviceArn device-arn}})
-         _ (println "GetDevice response:" response)
-         _ (println "Keys:" (keys response))]
-     (if (:cognitect.anomalies/category response)
-       {:error response}
-       (let [capabilities (json/read-str (:deviceCapabilities response) {:key-fn keyword})
-             _ (println "Device capabilities:" capabilities)]
-         (assoc response :capabilities capabilities))))))
-
-(defn- quantum-task
+(defn quantum-task
   "Get quantum task details from AWS Braket"
   [backend task-arn]
-  (let [response (aws/invoke (:client backend) {:op :GetQuantumTask
-                                                :request {:quantumTaskArn task-arn}})]
+  (let [response (fmt/kebab-keys (aws/invoke (:braket-client backend) {:op :GetQuantumTask
+                                                :request {:quantumTaskArn task-arn}}))]
     (println "GetQuantumTask response:" response)
     (if (:cognitect.anomalies/category response)
       {:error response}
       response)))
-
-(defn braket-device
-  [braket-device]
-  (let [arn (:deviceArn braket-device)
-        braket-device {:id (:deviceArn braket-device)
-                       :name (:deviceName braket-device)
-                       :status (device/device-status (:deviceStatus braket-device) :unknown)
-                       :type (device/device-type (:deviceType braket-device) :qpu)
-                       :provider (:providerName braket-device)}
-        enhanced-device (merge (get device/device-properties arn {}) braket-device)]
-    enhanced-device))
-
-(defn- braket-devices
-  "Call AWS Braket API to list available devices"
-  [client]
-  (try
-    (println "Fetching devices from AWS Braket...")
-    (let [response (aws/invoke client {:op :SearchDevices
-                                       :request {:filters []}})]
-      (println "Braket devices response:" response)
-      (if (:cognitect.anomalies/category response)
-        {:error response}
-        (map braket-device (:devices response))))
-    (catch Exception e
-      {:error {:message (.getMessage e)
-               :type :api-error}})))
 
 ;;;
 ;;; Quantum Backend Functions
@@ -145,31 +94,27 @@
    :capabilities #{:mult-device :cloud :batch}
    :config (:config backend)
    :provider :aws
-   :devices (:devices @backend-state)
-   :device (:current-device @backend-state)
+   :devices (:devices @(:state backend))
+   :device (:current-device @(:state backend))
    :created-at (System/currentTimeMillis)})
 
 (defn available?
   [backend]
-  (let [device-arn (or (:id (:current-device @backend-state))
+  (let [device-arn (or (:id (:current-device @(:state backend)))
                        "arn:aws:braket:::device/quantum-simulator/amazon/sv1")]
     (try
-      (let [response (aws/invoke (:client backend) {:op :GetDevice
-                                                    :request {:deviceArn device-arn}})
+      (let [response (fmt/kebab-keys (aws/invoke (:braket-client backend) {:op :GetDevice
+                                                    :request {:deviceArn device-arn}}))
             _ (println "Device availability response:" response)]
         (if (:cognitect.anomalies/category response)
           false
-          (= "ONLINE" (:deviceStatus response))))
+          (= "ONLINE" (:device-status response))))
       (catch Exception _e
         false))))
 
-(defn device
-  [backend]
-  (:current-device @backend-state))
-
 (defn submit-circuit
   [backend circuit options]
-  (let [device (:current-device @backend-state)
+  (let [device (:current-device @(:state backend))
         options (assoc options :target :braket)
         ;; Apply hardware optimization if requested
         optimization-result (hwopt/optimize circuit device options)
@@ -193,14 +138,14 @@
                       :outputS3KeyPrefix task-key}
         _ (println "Submitting task request:" (json/write-str task-request))
         ;; Submit to Braket
-        response (aws/invoke (:client backend) {:op :CreateQuantumTask :request task-request})]
+        response (fmt/kebab-keys (aws/invoke (:braket-client backend) {:op :CreateQuantumTask :request task-request}))]
 
     (if (:cognitect.anomalies/category response)
       {:error response}
-      (let [task-arn (:quantumTaskArn response)
+      (let [task-arn (:quantum-task-arn response)
             job-id (str "braket-" (java.util.UUID/randomUUID))]
           ; Store the task mapping in our state with additional metadata
-        (swap! backend-state assoc-in [:jobs job-id] {:task-arn task-arn
+        (swap! (:state backend) assoc-in [:jobs job-id] {:task-arn task-arn
                                                       :submitted-at (System/currentTimeMillis)
                                                       :original-circuit circuit
                                                       :final-circuit optimized-circuit
@@ -209,10 +154,10 @@
 
 (defn job-status
   [backend job-id]
-  (if-let [job-info (get-in @backend-state [:jobs job-id])]
+  (if-let [job-info (get-in @(:state backend) [:jobs job-id])]
     (let [task-arn (:task-arn job-info)
-          response (aws/invoke (:client backend) {:op :GetQuantumTask
-                                                  :request {:quantumTaskArn task-arn}})
+          response (fmt/kebab-keys (aws/invoke (:braket-client backend) {:op :GetQuantumTask
+                                                  :request {:quantumTaskArn task-arn}}))
           _ (println "Job status response:" response)]
       (if (:cognitect.anomalies/category response)
         :failed
@@ -228,10 +173,10 @@
 
 (defn job-result
   [backend job-id]
-  (if-let [job-info (get-in @backend-state [:jobs job-id])]
+  (if-let [job-info (get-in @(:state backend) [:jobs job-id])]
     (let [task-arn (:task-arn job-info)
-          response (aws/invoke (:client backend) {:op :GetQuantumTask
-                                                  :request {:quantumTaskArn task-arn}})
+          response (fmt/kebab-keys (aws/invoke (:braket-client backend) {:op :GetQuantumTask
+                                                  :request {:quantumTaskArn task-arn}}))
           _ (println "Job result response:" response)]
       (if (:cognitect.anomalies/category response)
         {:job-status :failed
@@ -287,15 +232,15 @@
 
 (defn cancel-job
   [backend job-id]
-  (if-let [job-info (get-in @backend-state [:jobs job-id])]
+  (if-let [job-info (get-in @(:state backend) [:jobs job-id])]
     (let [task-arn (:task-arn job-info)]
       (try
-        (let [response (aws/invoke (:client backend) {:op :CancelQuantumTask
-                                                      :request {:quantumTaskArn task-arn}})]
+        (let [response (fmt/kebab-keys (aws/invoke (:braket-client backend) {:op :CancelQuantumTask
+                                                      :request {:quantumTaskArn task-arn}}))]
           (if (:cognitect.anomalies/category response)
             :cannot-cancel
             (do
-              (swap! backend-state assoc-in [:jobs job-id :cancelled-at] (System/currentTimeMillis))
+              (swap! (:state backend) assoc-in [:jobs job-id :cancelled-at] (System/currentTimeMillis))
               :cancelled)))
         (catch Exception _e
           :cannot-cancel)))
@@ -303,39 +248,21 @@
 
 (defn queue-status
   [backend]
-  (let [device-arn (or (:id (:current-device @backend-state))
+  (let [device-arn (or (:id (:current-device @(:state backend)))
                        "arn:aws:braket:::device/quantum-simulator/amazon/sv1")]
     (try
-      (let [response (aws/invoke (:client backend) {:op :GetDevice
-                                                    :request {:deviceArn device-arn}})]
+      (let [response (fmt/kebab-keys (aws/invoke (:braket-client backend) {:op :GetDevice
+                                                    :request {:deviceArn device-arn}}))]
         (if (:cognitect.anomalies/category response)
           {:error response}
-          (let [queue-info (:deviceQueueInfo response)]
+          (let [queue-info (:device-queue-info response)]
             {:device-arn device-arn
-             :queue-type (:queueType queue-info)
-             :queue-size (:queueSize queue-info)
-             :priority (:queuePriority queue-info)
-             :status (:deviceStatus response)})))
+             :queue-type (:queue-type queue-info)
+             :queue-size (:queue-size queue-info)
+             :priority (:queue-priority queue-info)
+             :status (:device-status response)})))
       (catch Exception e
         {:error {:message (.getMessage e) :type :api-error}}))))
-
-;;;
-;;; Multi-Device Management Functions
-;;;
-(defn devices
-  [backend]
-  (let [devices (braket-devices (:client backend))]
-    (swap! backend-state assoc :devices devices)
-    devices))
-
-(defn select-device
-  [backend device]
-  (let [device (if (string? device)
-                 (some (fn [d] (when (= (:id d) device) d))
-                       (:devices @backend-state))
-                 device)]
-    (swap! backend-state assoc :current-device device)
-    (:current-device @backend-state)))
 
 ;;;
 ;;; Cloud Backend Functions
@@ -354,50 +281,9 @@
    :session-id (str "braket-session-" (java.util.UUID/randomUUID))
    :region (:region (:config backend))
    :device-arn (:device-arn (:config backend))
-   :active-jobs (count (get-in @backend-state [:jobs]))
-   :active-batches (count (get-in @backend-state [:batches]))
+   :active-jobs (count (get-in @(:state backend) [:jobs]))
+   :active-batches (count (get-in @(:state backend) [:batches]))
    :session-start (System/currentTimeMillis)})
-
-(defn estimate-cost
-  [backend circuits options]
-  (let [device-arn (or (:id (:current-device @backend-state))
-                       "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
-        shots (get options :shots 1000)
-        circuit-count (if (sequential? circuits) (count circuits) 1)
-        total-shots (* circuit-count shots)
-        device-type (if (str/includes? device-arn "simulator") :simulator :quantum)
-        region (:region (:config backend) "us-east-1")
-        pricing-data (pricing/braket-pricing backend device-type region)
-        base-cost (:price-per-task pricing-data)
-        shot-cost (:price-per-shot pricing-data)
-        circuit-complexity (get (if (sequential? circuits) (first circuits) circuits) :gate-count 10)
-        ;; Enhanced: Apply provider-specific pricing multiplier
-        device-info (device/parse-device-info device-arn)
-        provider-multiplier (if device-info
-                              (pricing/provider-pricing-multiplier (:provider device-info))
-                              1.0)
-        adjusted-base-cost (* base-cost provider-multiplier)
-        adjusted-shot-cost (* shot-cost provider-multiplier)]
-    {:total-cost (+ (* circuit-count adjusted-base-cost)
-                    (* total-shots adjusted-shot-cost))
-     :currency (:currency pricing-data)
-     :cost-breakdown {:base-cost-per-task adjusted-base-cost
-                      :shot-cost-per-shot adjusted-shot-cost
-                      :total-tasks circuit-count
-                      :total-shots total-shots
-                      :task-cost (* circuit-count adjusted-base-cost)
-                      :shot-cost (* total-shots adjusted-shot-cost)
-                      :provider-multiplier provider-multiplier
-                      :original-base-cost base-cost
-                      :original-shot-cost shot-cost
-                      :device-type device-type
-                      :provider (get device-info :provider :unknown)
-                      :complexity-factor circuit-complexity}
-     ;; legacy fields retained for convenience
-     :estimated-cost-usd (+ (* circuit-count adjusted-base-cost)
-                            (* total-shots adjusted-shot-cost))
-     :pricing-source (:source pricing-data)
-     :last-updated (:last-updated pricing-data)}))
 
 ;;;
 ;;; Batch Job Functions
@@ -424,7 +310,7 @@
 
 (defn batch-results
   [backend batch-id]
-  (if-let [batch-info (get-in @backend-state [:batches batch-id])]
+  (if-let [batch-info (get-in @(:state backend) [:batches batch-id])]
     (let [job-ids (:job-ids batch-info)
           results (map #(backend/job-result backend %) job-ids)]
       {:batch-id batch-id
@@ -456,7 +342,7 @@
                  (inc chunk-index)))
             ; Store batch information
         (do
-          (swap! @backend-state assoc-in [:batches batch-id]
+          (swap! (:state backend) assoc-in [:batches batch-id]
                  {:job-ids job-ids
                   :submitted-at (System/currentTimeMillis)
                   :total-circuits (count circuits)
@@ -468,7 +354,7 @@
 ;;;
 ;;; BraketBackend Implementation
 ;;;
-(defrecord BraketBackend [client s3-client pricing-client config state session-info]
+(defrecord BraketBackend [state config braket-client s3-client pricing-client session-info]
   ;; Basic backend info
   Object
   (toString [_this]
@@ -481,7 +367,7 @@
     (backend-info this))
 
   (device [this]
-    (device this))
+    (device/device this))
 
   (available? [this]
     (available? this))
@@ -504,10 +390,10 @@
   ;; MultiDeviceBackend protocol implementation  
   backend/MultiDeviceBackend
   (devices [this]
-    (devices this))
+    (device/devices this))
 
   (select-device [this device]
-    (select-device this device))
+    (device/select-device this device))
 
   ;; CloudQuantumBackend protocol implementation  
   backend/CloudQuantumBackend
@@ -518,7 +404,7 @@
     (session-info this))
 
   (estimate-cost [this circuits options]
-    (estimate-cost this circuits options))
+    (pricing/estimate-cost this circuits options))
 
   backend/BatchJobBackend
   (batch-status [this batch-id]
@@ -568,24 +454,21 @@
                      {:type :missing-s3-bucket
                       :config config
                       :help "Provide :s3-bucket in the config map, e.g., {:s3-bucket \"amazon-braket-results-1234\"}"})))
-   (let [merged-config (merge {:region "us-east-1"
-                               :shots 1000
-                               :max-parallel-shots 10
-                               :s3-key-prefix "braket-results/"}
-                              config)
-         client (create-braket-client merged-config)
-         s3-client (task/create-s3-client merged-config)
-         pricing-client (pricing/create-pricing-client merged-config)
-         initial-state (atom {:job-counter 0
-                              :active-jobs {}
-                              :devices []
-                              :current-device nil}
-                             #_{:jobs {}
-                                :batches {}
-                                :devices-cache nil
-                                :last-devices-refresh nil
-                                :pricing-cache {}})]
-     (->BraketBackend client s3-client pricing-client merged-config initial-state {}))))
+
+    (let [merged-config (merge {:region "us-east-1"
+                                :shots 1000
+                                :max-parallel-shots 10
+                                :s3-key-prefix "braket-results/"}
+                               config)]
+      (map->BraketBackend {:state (atom {:job-counter 0
+                                         :active-jobs {}
+                                         :devices []
+                                         :current-device nil})
+                           :config merged-config
+                           :braket-client (create-braket-client merged-config)
+                           :s3-client (task/create-s3-client merged-config)
+                           :pricing-client (pricing/create-pricing-client merged-config)
+                           :session-info {}}))))
 
 (defn create-braket-simulator
   "Create a Braket simulator backend for local testing.
@@ -634,21 +517,22 @@
   ;; First create a braket backend instance
   (def backend (create-braket-backend {:s3-bucket "amazon-braket-results-1207"}))
   (def backend (create-braket-backend {:s3-bucket "amazon-braket-results-1207"
-                                       :region "eu-north-1"}))
-  
+                                       :region "eu-north-1"})) 
   (require '[org.soulspace.qclojure.adapter.backend.ideal-simulator :as ideal])
   (def backend (ideal/create-simulator))
 
+  backend
+
   ;; Enable/disable request validation for debugging
-  (aws/validate-requests (:client backend) true)
-  (aws/validate-requests (:client backend) false)
+  (aws/validate-requests (:braket-client backend) true)
+  (aws/validate-requests (:braket-client backend) false)
 
   ;; Create a Bell state circuit
   (def bell-circuit (-> (circuit/bell-state-circuit)
                         (circuit/measure-all-operation)))
 
   (backend/devices backend)
-  (map :id (:devices @backend-state))
+  (map :id (:devices @(:state backend)))
 
   (backend/select-device backend "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
   (backend/select-device backend "arn:aws:braket:::device/quantum-simulator/amazon/dm1")
@@ -666,19 +550,19 @@
   (backend/available? backend)
 
   (backend/device backend)
-  (device-info backend)
+  (device/device-info backend)
 
-  (fmt/save-formatted-edn "dev/devices/SV1.edn" (device-info backend "arn:aws:braket:::device/quantum-simulator/amazon/sv1"))
-  (fmt/save-formatted-edn "dev/devices/DM1.edn" (device-info backend "arn:aws:braket:::device/quantum-simulator/amazon/dm1"))
-  (fmt/save-formatted-edn "dev/devices/TN1.edn" (device-info backend "arn:aws:braket:::device/quantum-simulator/amazon/tn1"))
-  (fmt/save-formatted-edn "dev/devices/Forte-1.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-1"))
-  (fmt/save-formatted-edn "dev/devices/Forte-Enterprise-1.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-Enterprise-1"))
-  (fmt/save-formatted-edn "dev/devices/Aria-1.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Aria-1"))
-  (fmt/save-formatted-edn "dev/devices/Aria-2.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Aria-2"))
-  (fmt/save-formatted-edn "dev/devices/Aquila.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/quera/Aquila"))
-  (fmt/save-formatted-edn "dev/devices/Borealis.edn" (device-info backend "arn:aws:braket:us-east-1::device/qpu/xanadu/Borealis"))
-  (fmt/save-formatted-edn "dev/devices/Garnet.edn" (device-info backend "arn:aws:braket:eu-north-1::device/qpu/iqm/Garnet"))
-  (fmt/save-formatted-edn "dev/devices/Emerald.edn" (device-info backend "arn:aws:braket:eu-north-1::device/qpu/iqm/Emerald"))
+  (fmt/save-formatted-edn "dev/devices/SV1.edn" (device/device-info backend "arn:aws:braket:::device/quantum-simulator/amazon/sv1"))
+  (fmt/save-formatted-edn "dev/devices/DM1.edn" (device/device-info backend "arn:aws:braket:::device/quantum-simulator/amazon/dm1"))
+  (fmt/save-formatted-edn "dev/devices/TN1.edn" (device/device-info backend "arn:aws:braket:::device/quantum-simulator/amazon/tn1"))
+  (fmt/save-formatted-edn "dev/devices/Forte-1.edn" (device/device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-1"))
+  (fmt/save-formatted-edn "dev/devices/Forte-Enterprise-1.edn" (device/device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-Enterprise-1"))
+  (fmt/save-formatted-edn "dev/devices/Aria-1.edn" (device/device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Aria-1"))
+  (fmt/save-formatted-edn "dev/devices/Aria-2.edn" (device/device-info backend "arn:aws:braket:us-east-1::device/qpu/ionq/Aria-2"))
+  (fmt/save-formatted-edn "dev/devices/Aquila.edn" (device/device-info backend "arn:aws:braket:us-east-1::device/qpu/quera/Aquila"))
+  (fmt/save-formatted-edn "dev/devices/Borealis.edn" (device/device-info backend "arn:aws:braket:us-east-1::device/qpu/xanadu/Borealis"))
+  (fmt/save-formatted-edn "dev/devices/Garnet.edn" (device/device-info backend "arn:aws:braket:eu-north-1::device/qpu/iqm/Garnet"))
+  (fmt/save-formatted-edn "dev/devices/Emerald.edn" (device/device-info backend "arn:aws:braket:eu-north-1::device/qpu/iqm/Emerald"))
 
   (quantum-task backend "arn:aws:braket:us-east-1:579360542232:quantum-task/d02cb431-1820-4ad4-bf49-76441d0ee945")
 
@@ -709,9 +593,9 @@
   (println "Job status:" (cancel-job backend ""))
 
   (slurp "dev/req.json")
-  (aws/doc (:client backend) :CreateQuantumTask)
+  (aws/doc (:braket-client backend) :CreateQuantumTask)
 
-  (let [response (aws/invoke (:client backend) {:op :CreateQuantumTask :request (slurp "dev/req.json")})]
+  (let [response (aws/invoke (:braket-client backend) {:op :CreateQuantumTask :request (slurp "dev/req.json")})]
     (println "CreateQuantumTask response:" response))
 
   ;; Test conversion with the provided result

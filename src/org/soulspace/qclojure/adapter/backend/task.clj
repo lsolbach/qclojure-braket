@@ -88,7 +88,7 @@
         ;; Calculate empirical probabilities
         empirical-probs (into {}
                               (map (fn [[outcome count]]
-                                     [outcome (/ count shots)])
+                                     [outcome (double (/ count shots))])
                                    frequencies))
 
         ;; For hardware, theoretical = empirical
@@ -101,7 +101,7 @@
      :shot-count shots
      :measurement-qubits (range num-qubits)
      :frequencies frequencies
-     :source :braket-hardware}))
+     :source :braket-sim}))
 
 (defn convert-qpu-probabilities
   "Convert QPU measurement probabilities to QClojure format."
@@ -126,9 +126,11 @@
                                    prob-map))
 
         ;; Generate measurement outcomes by sampling
-        outcomes (vec (mapcat (fn [[outcome count]]
-                                (repeat count outcome))
-                              frequencies))
+        outcomes (->> frequencies
+                      (mapcat (fn [[outcome count]]
+                                (repeat count outcome)))
+                      (shuffle)
+                      (vec))
 
         ;; For hardware, theoretical = empirical
         measurement-probs-vec (mapv #(get empirical-probs % 0.0)
@@ -140,7 +142,7 @@
      :shot-count shots
      :measurement-qubits (range num-qubits)
      :frequencies frequencies
-     :source :braket-hardware}))
+     :source :braket-qpu}))
 
 ; TODO consolidate keywords
 (defn detect-device-type
@@ -189,8 +191,7 @@
 
       :qpu
       (convert-qpu-probabilities
-       (or (:measurement-probabilities raw-results)
-           (:measurementProbabilities raw-results))
+       (:measurement-probabilities raw-results)
        shots
        num-qubits)
 
@@ -278,3 +279,27 @@
     {:error {:message "No S3 output location found in task response"
              :type :missing-s3-location}}))
 
+(comment ; conversion tests
+  (def sim-result
+    {:measurements [[0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0]
+                    [0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0]
+                    [0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0]
+                    [0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0]
+                    [0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0]
+                    [0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0]
+                    [0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0]
+                    [0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0]
+                    [0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0]
+                    [0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0]]
+     :measured-qubits [0 1]
+     :shots 100})
+
+  (def qpu-result
+    {:measurement-probabilities {:00 0.40 :11 0.60}
+     :measured-qubits [0 1]
+     :shots 100})
+
+  (convert-simulator-measurements (:measurements sim-result) (:shots sim-result) 2)
+  (convert-qpu-probabilities (:measurement-probabilities qpu-result) (:shots qpu-result) 2)
+  ;
+  )

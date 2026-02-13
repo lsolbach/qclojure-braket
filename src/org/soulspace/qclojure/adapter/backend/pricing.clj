@@ -10,7 +10,8 @@
   (:require [clojure.spec.alpha :as s]
             [clojure.string :as str]
             [clojure.data.json :as json]
-            [cognitect.aws.client.api :as aws]))
+            [cognitect.aws.client.api :as aws]
+            [org.soulspace.qclojure.adapter.backend.device :as device]))
 
 ;;;
 ;;; AWS Pricing Functions
@@ -167,4 +168,45 @@
   ([config-overrides]
    (let [config (merge default-pricing-config config-overrides)]
      (aws/client config))))
+
+(defn estimate-cost
+  [backend circuits options]
+  (let [device-arn (or (:id (:current-device @(:state backend)))
+                       "arn:aws:braket:::device/quantum-simulator/amazon/sv1")
+        shots (get options :shots 1000)
+        circuit-count (if (sequential? circuits) (count circuits) 1)
+        total-shots (* circuit-count shots)
+        device-type (if (str/includes? device-arn "simulator") :simulator :quantum)
+        region (:region (:config backend) "us-east-1")
+        pricing-data (braket-pricing backend device-type region)
+        base-cost (:price-per-task pricing-data)
+        shot-cost (:price-per-shot pricing-data)
+        circuit-complexity (get (if (sequential? circuits) (first circuits) circuits) :gate-count 10)
+        ;; Enhanced: Apply provider-specific pricing multiplier
+        device-info (device/parse-device-info device-arn)
+        provider-multiplier (if device-info
+                              (provider-pricing-multiplier (:provider device-info))
+                              1.0)
+        adjusted-base-cost (* base-cost provider-multiplier)
+        adjusted-shot-cost (* shot-cost provider-multiplier)]
+    {:total-cost (+ (* circuit-count adjusted-base-cost)
+                    (* total-shots adjusted-shot-cost))
+     :currency (:currency pricing-data)
+     :cost-breakdown {:base-cost-per-task adjusted-base-cost
+                      :shot-cost-per-shot adjusted-shot-cost
+                      :total-tasks circuit-count
+                      :total-shots total-shots
+                      :task-cost (* circuit-count adjusted-base-cost)
+                      :shot-cost (* total-shots adjusted-shot-cost)
+                      :provider-multiplier provider-multiplier
+                      :original-base-cost base-cost
+                      :original-shot-cost shot-cost
+                      :device-type device-type
+                      :provider (get device-info :provider :unknown)
+                      :complexity-factor circuit-complexity}
+     ;; legacy fields retained for convenience
+     :estimated-cost-usd (+ (* circuit-count adjusted-base-cost)
+                            (* total-shots adjusted-shot-cost))
+     :pricing-source (:source pricing-data)
+     :last-updated (:last-updated pricing-data)}))
 
