@@ -171,6 +171,7 @@
           :unknown)))
     :failed))
 
+; TODO simplifix 
 (defn job-result
   [backend job-id]
   (if-let [job-info (get-in @(:state backend) [:jobs job-id])]
@@ -586,8 +587,8 @@
     (Thread/sleep 20000)
     (println "Job result:" (backend/job-result backend job-id)))
 
-  (println "Job status:" (job-status backend "braket-f6c3d842-8e86-416c-a92c-9008ff57d8d7"))
-  (println "Job result:" (job-result backend "braket-f6c3d842-8e86-416c-a92c-9008ff57d8d7"))
+  (println "Job status:" (job-status backend "braket-dfe7250b-7c78-45fb-850d-28c95478abc4"))
+  (println "Job result:" (job-result backend "braket-dfe7250b-7c78-45fb-850d-28c95478abc4"))
 
   ;; Cancel job
   (println "Job status:" (cancel-job backend ""))
