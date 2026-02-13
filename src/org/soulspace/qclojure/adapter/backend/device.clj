@@ -5,6 +5,7 @@
             [clojure.data.json :as json]
             [clojure.java.io :as io]
             [cognitect.aws.client.api :as aws]
+            [camel-snake-kebab.core :as csk]
             [org.soulspace.qclojure.adapter.backend.format :as fmt]))
 
 ;;;
@@ -88,7 +89,7 @@
          _ (println "Keys:" (keys response))]
      (if (:cognitect.anomalies/category response)
        {:error response}
-       (let [capabilities (json/read-str (:device-capabilities response) {:key-fn keyword})
+       (let [capabilities (json/read-str (:device-capabilities response) :key-fn csk/->kebab-case-keyword)
              _ (println "Device capabilities:" capabilities)]
          (assoc response :capabilities capabilities))))))
 

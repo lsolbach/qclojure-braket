@@ -38,8 +38,9 @@
 (defn parse-s3-location
   "Parse S3 bucket and key from Braket task response"
   [task-response]
-  (when-let [output-s3-bucket (:outputS3Bucket task-response)]
-    (let [output-s3-dir (:outputS3Directory task-response)]
+  ; TODO check s-3 vs s3
+  (when-let [output-s3-bucket (:output-s-3-bucket task-response)]
+    (let [output-s3-dir (:output-s-3-directory task-response)]
       {:bucket output-s3-bucket
        :key-prefix (str output-s3-dir "/")
        :results-key (str output-s3-dir "/results.json")
@@ -248,14 +249,14 @@
   (try
     (let [results (json/read-str results-json :key-fn csk/->kebab-case-keyword)
           measurements (:measurements results)
-          measurement-counts (:measurementCounts results)
-          measurement-probabilities (:measurementProbabilities results)]
+          measurement-counts (:measurement-counts results)
+          measurement-probabilities (:measurement-probabilities results)]
 
       {:raw-results results
        :measurements (or measurements measurement-counts)
        :probabilities measurement-probabilities
-       :task-metadata (:taskMetadata results)
-       :additional-metadata (:additionalMetadata results)})
+       :task-metadata (:task-metadata results)
+       :additional-metadata (:additional-metadata results)})
     (catch Exception e
       {:error {:message (.getMessage e)
                :type :json-parse-error
