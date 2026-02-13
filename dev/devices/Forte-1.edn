@@ -15,153 +15,153 @@
                       :queue-size "0"}]
  :capabilities
    {:service
-      {:braketSchemaHeader {:name
-                              "braket.device_schema.device_service_properties"
-                            :version "1"}
-       :executionWindows [{:executionDay "Sunday"
-                           :windowStartHour "00:00:00"
-                           :windowEndHour "17:59:59"}
-                          {:executionDay "Sunday"
-                           :windowStartHour "18:30:00"
-                           :windowEndHour "23:59:59"}
-                          {:executionDay "Monday"
-                           :windowStartHour "00:00:00"
-                           :windowEndHour "17:59:59"}
-                          {:executionDay "Monday"
-                           :windowStartHour "18:30:00"
-                           :windowEndHour "23:59:59"}
-                          {:executionDay "Tuesday"
-                           :windowStartHour "00:00:00"
-                           :windowEndHour "17:59:59"}
-                          {:executionDay "Tuesday"
-                           :windowStartHour "18:30:00"
-                           :windowEndHour "23:59:59"}
-                          {:executionDay "Wednesday"
-                           :windowStartHour "00:00:00"
-                           :windowEndHour "17:44:59"}
-                          {:executionDay "Wednesday"
-                           :windowStartHour "23:00:00"
-                           :windowEndHour "23:59:59"}
-                          {:executionDay "Thursday"
-                           :windowStartHour "00:00:00"
-                           :windowEndHour "17:59:59"}
-                          {:executionDay "Thursday"
-                           :windowStartHour "18:30:00"
-                           :windowEndHour "23:59:59"}
-                          {:executionDay "Friday"
-                           :windowStartHour "00:00:00"
-                           :windowEndHour "17:59:59"}
-                          {:executionDay "Friday"
-                           :windowStartHour "18:30:00"
-                           :windowEndHour "23:59:59"}
-                          {:executionDay "Saturday"
-                           :windowStartHour "00:00:00"
-                           :windowEndHour "17:59:59"}
-                          {:executionDay "Saturday"
-                           :windowStartHour "18:30:00"
-                           :windowEndHour "23:59:59"}]
-       :shotsRange [100 5000]
-       :deviceCost {:price 0.08
-                    :unit "shot"}
-       :deviceDocumentation
-         {:imageUrl
+      {:braket-schema-header {:name
+                                "braket.device_schema.device_service_properties"
+                              :version "1"}
+       :execution-windows [{:execution-day "Sunday"
+                            :window-start-hour "00:00:00"
+                            :window-end-hour "17:59:59"}
+                           {:execution-day "Sunday"
+                            :window-start-hour "18:30:00"
+                            :window-end-hour "23:59:59"}
+                           {:execution-day "Monday"
+                            :window-start-hour "00:00:00"
+                            :window-end-hour "17:59:59"}
+                           {:execution-day "Monday"
+                            :window-start-hour "18:30:00"
+                            :window-end-hour "23:59:59"}
+                           {:execution-day "Tuesday"
+                            :window-start-hour "00:00:00"
+                            :window-end-hour "17:59:59"}
+                           {:execution-day "Tuesday"
+                            :window-start-hour "18:30:00"
+                            :window-end-hour "23:59:59"}
+                           {:execution-day "Wednesday"
+                            :window-start-hour "00:00:00"
+                            :window-end-hour "17:44:59"}
+                           {:execution-day "Wednesday"
+                            :window-start-hour "23:00:00"
+                            :window-end-hour "23:59:59"}
+                           {:execution-day "Thursday"
+                            :window-start-hour "00:00:00"
+                            :window-end-hour "17:59:59"}
+                           {:execution-day "Thursday"
+                            :window-start-hour "18:30:00"
+                            :window-end-hour "23:59:59"}
+                           {:execution-day "Friday"
+                            :window-start-hour "00:00:00"
+                            :window-end-hour "17:59:59"}
+                           {:execution-day "Friday"
+                            :window-start-hour "18:30:00"
+                            :window-end-hour "23:59:59"}
+                           {:execution-day "Saturday"
+                            :window-start-hour "00:00:00"
+                            :window-end-hour "17:59:59"}
+                           {:execution-day "Saturday"
+                            :window-start-hour "18:30:00"
+                            :window-end-hour "23:59:59"}]
+       :shots-range [100 5000]
+       :device-cost {:price 0.08
+                     :unit "shot"}
+       :device-documentation
+         {:image-url
             "http://d1.awsstatic.com/re19/Braket/IonQ%20Logo.59ea92b40cff5a2c2e90d9d981b864c2f424c5a8.png"
           :summary "Universal gate-model QPU based on trapped ions"
-          :externalDocumentationUrl "https://ionq.com/quantum-systems/forte"}
-       :deviceLocation "Maryland, USA"
-       :updatedAt "2026-02-12T00:00:00+00:00"}
+          :external-documentation-url "https://ionq.com/quantum-systems/forte"}
+       :device-location "Maryland, USA"
+       :updated-at "2026-02-12T00:00:00+00:00"}
     :action
       {:braket.ir.openqasm.program
-         {:forbiddenPragmas
+         {:forbidden-array-operations ["concatenation" "negativeIndex" "range"
+                                       "rangeWithStep" "slicing" "selection"]
+          :supports-partial-verbatim-box false
+          :support-physical-qubits true
+          :maximum-classical-arrays 1
+          :requires-contiguous-qubit-indices false
+          :forbidden-pragmas
             ["braket_unitary_matrix" "braket_result_type_state_vector"
              "braket_result_type_density_matrix" "braket_result_type_amplitude"
              "braket_result_type_adjoint_gradient"]
-          :supportsUnassignedMeasurements true
-          :supportedPragmas ["braket_result_type_sample"
-                             "braket_result_type_expectation"
-                             "braket_result_type_variance"
-                             "braket_result_type_probability" "verbatim"]
-          :supportedOperations ["x" "y" "z" "h" "s" "si" "t" "ti" "v" "vi" "rx"
-                                "ry" "rz" "cnot" "swap" "xx" "yy"]
-          :supportsPartialVerbatimBox false
-          :supportedResultTypes [{:name "Sample"
-                                  :observables ["x" "y" "z" "h" "i"]
-                                  :minShots 1
-                                  :maxShots 5000}
-                                 {:name "Expectation"
-                                  :observables ["x" "y" "z" "h" "i"]
-                                  :minShots 1
-                                  :maxShots 5000}
-                                 {:name "Variance"
-                                  :observables ["x" "y" "z" "h" "i"]
-                                  :minShots 1
-                                  :maxShots 5000}
-                                 {:name "Probability"
-                                  :minShots 1
-                                  :maxShots 5000}]
-          :disabledQubitRewiringSupported false
-          :supportPhysicalQubits true
-          :maximumQubitArrays 1
-          :maximumClassicalArrays 1
-          :supportedModifiers []
-          :requiresAllQubitsMeasurement false
-          :actionType "braket.ir.openqasm.program"
-          :requiresContiguousQubitIndices false
-          :forbiddenArrayOperations ["concatenation" "negativeIndex" "range"
-                                     "rangeWithStep" "slicing" "selection"]
-          :version ["1"]}}
-    :deviceParameters
+          :supports-unassigned-measurements true
+          :maximum-qubit-arrays 1
+          :supported-operations ["x" "y" "z" "h" "s" "si" "t" "ti" "v" "vi" "rx"
+                                 "ry" "rz" "cnot" "swap" "xx" "yy"]
+          :supported-modifiers []
+          :supported-pragmas ["braket_result_type_sample"
+                              "braket_result_type_expectation"
+                              "braket_result_type_variance"
+                              "braket_result_type_probability" "verbatim"]
+          :version ["1"]
+          :supported-result-types [{:name "Sample"
+                                    :observables ["x" "y" "z" "h" "i"]
+                                    :min-shots 1
+                                    :max-shots 5000}
+                                   {:name "Expectation"
+                                    :observables ["x" "y" "z" "h" "i"]
+                                    :min-shots 1
+                                    :max-shots 5000}
+                                   {:name "Variance"
+                                    :observables ["x" "y" "z" "h" "i"]
+                                    :min-shots 1
+                                    :max-shots 5000}
+                                   {:name "Probability"
+                                    :min-shots 1
+                                    :max-shots 5000}]
+          :requires-all-qubits-measurement false
+          :disabled-qubit-rewiring-supported false
+          :action-type "braket.ir.openqasm.program"}}
+    :device-parameters
       {:title "IonqDeviceParameters"
        :description
          "This defines the parameters common to all the IonQ devices."
        :type "object"
        :properties
-         {:braketSchemaHeader
+         {:braket-schema-header
             {:title "Braketschemaheader"
              :default {:name "braket.device_schema.ionq.ionq_device_parameters"
                        :version "1"}
              :const {:name "braket.device_schema.ionq.ionq_device_parameters"
                      :version "1"}}
-          :paradigmParameters {:$ref "#/definitions/GateModelParameters"}
-          :errorMitigation {:title "Errormitigation"
-                            :type "array"
-                            :items {:$ref
-                                      "#/definitions/ErrorMitigationScheme"}}}
+          :paradigm-parameters {:$ref "#/definitions/GateModelParameters"}
+          :error-mitigation {:title "Errormitigation"
+                             :type "array"
+                             :items {:$ref
+                                       "#/definitions/ErrorMitigationScheme"}}}
        :required ["paradigmParameters"]
        :definitions
-         {:GateModelParameters
+         {:gate-model-parameters
             {:title "GateModelParameters"
              :description "Defines parameters common to all gate model devices."
              :type "object"
              :properties
-               {:braketSchemaHeader
+               {:braket-schema-header
                   {:title "Braketschemaheader"
                    :default {:name "braket.device_schema.gate_model_parameters"
                              :version "1"}
                    :const {:name "braket.device_schema.gate_model_parameters"
                            :version "1"}}
-                :qubitCount {:title "Qubitcount"
-                             :minimum 0
-                             :type "integer"}
-                :disableQubitRewiring {:title "Disablequbitrewiring"
-                                       :default false
-                                       :type "boolean"}}
+                :qubit-count {:title "Qubitcount"
+                              :minimum 0
+                              :type "integer"}
+                :disable-qubit-rewiring {:title "Disablequbitrewiring"
+                                         :default false
+                                         :type "boolean"}}
              :required ["qubitCount"]}
-          :ErrorMitigationScheme {:title "ErrorMitigationScheme"
-                                  :description
-                                    "Base class for an error mitigation scheme."
-                                  :type "object"
-                                  :properties {}}}}
-    :braketSchemaHeader {:name
-                           "braket.device_schema.ionq.ionq_device_capabilities"
-                         :version "1"}
+          :error-mitigation-scheme
+            {:title "ErrorMitigationScheme"
+             :description "Base class for an error mitigation scheme."
+             :type "object"
+             :properties {}}}}
+    :braket-schema-header
+      {:name "braket.device_schema.ionq.ionq_device_capabilities"
+       :version "1"}
     :paradigm
-      {:braketSchemaHeader
+      {:braket-schema-header
          {:name "braket.device_schema.gate_model_qpu_paradigm_properties"
           :version "1"}
        :connectivity
-         {:fullyConnected true
-          :connectivityGraph
+         {:fully-connected true
+          :connectivity-graph
             {:14 ["0" "1" "10" "11" "12" "13" "15" "16" "17" "18" "19" "2" "20"
                   "21" "22" "23" "24" "25" "26" "27" "28" "29" "3" "30" "31"
                   "32" "33" "34" "35" "4" "5" "6" "7" "8" "9"]
@@ -270,53 +270,53 @@
              :34 ["0" "1" "10" "11" "12" "13" "14" "15" "16" "17" "18" "19" "2"
                   "20" "21" "22" "23" "24" "25" "26" "27" "28" "29" "3" "30"
                   "31" "32" "33" "35" "4" "5" "6" "7" "8" "9"]}}
-       :qubitCount 36
-       :nativeGateSet ["GPI" "GPI2" "ZZ"]}
-    :provider {:braketSchemaHeader
+       :qubit-count 36
+       :native-gate-set ["GPI" "GPI2" "ZZ"]}
+    :provider {:braket-schema-header
                  {:name "braket.device_schema.ionq.ionq_provider_properties"
                   :version "1"}
-               :fidelity {:1Q {:mean 0.9998}
-                          :2Q {:mean 0.9955}
+               :fidelity {:1-q {:mean 0.9998}
+                          :2-q {:mean 0.9955}
                           :spam {:mean 0.9968}}
-               :timing {:T1 100.0
-                        :T2 1.0
-                        :1Q 1.3E-4
-                        :2Q 9.7E-4
+               :timing {:t-1 100.0
+                        :t-2 1.0
+                        :1-q 1.3E-4
+                        :2-q 9.7E-4
                         :readout 1.5E-4
                         :reset 5.0E-5}
-               :errorMitigation
-                 {:braket.device_schema.error_mitigation.debias.Debias
-                    {:minimumShots 2500}}}
+               :error-mitigation
+                 {:braket.device-schema.error-mitigation.debias.-debias
+                    {:minimum-shots 2500}}}
     :standardized
-      {:readoutDuration {:value 1.5E-4
-                         :unit "s"}
-       :updatedAt "2026-02-12T00:00:00+00:00"
-       :twoQubitGateFidelity
-         [{:fidelityType
-             {:name "RANDOMIZED_BENCHMARKING"
-              :description
-                "Average gate fidelities for a maximally entangling two-qubit native gate. It is regularly measured by IonQ on the device using Direct Randomized Benchmarking"}
-           :fidelity 0.9955
-           :standardError 0.0
-           :unit "fraction"}]
-       :readoutFidelity
-         [{:fidelityType
+      {:updated-at "2026-02-12T00:00:00+00:00"
+       :readout-fidelity
+         [{:fidelity-type
              {:name "RANDOMIZED_BENCHMARKING"
               :description
                 "Average readout fidelity is estimated with one-qubit randomized benchmarking."}
            :fidelity 0.9968
            :unit "fraction"}]
-       :twoQubitGateDuration {:value 9.7E-4
-                              :unit "s"}
-       :T1 {:value 100.0
-            :unit "s"}
-       :braketSchemaHeader
+       :single-qubit-gate-duration {:value 1.3E-4
+                                    :unit "s"}
+       :t-2 {:value 1.0
+             :unit "s"}
+       :active-reset-duration {:value 5.0E-5
+                               :unit "s"}
+       :two-qubit-gate-duration {:value 9.7E-4
+                                 :unit "s"}
+       :braket-schema-header
          {:name
             "braket.device_schema.standardized_gate_model_qpu_device_properties"
           :version "3"}
-       :T2 {:value 1.0
-            :unit "s"}
-       :activeResetDuration {:value 5.0E-5
-                             :unit "s"}
-       :singleQubitGateDuration {:value 1.3E-4
-                                 :unit "s"}}}}
+       :t-1 {:value 100.0
+             :unit "s"}
+       :two-qubit-gate-fidelity
+         [{:fidelity-type
+             {:name "RANDOMIZED_BENCHMARKING"
+              :description
+                "Average gate fidelities for a maximally entangling two-qubit native gate. It is regularly measured by IonQ on the device using Direct Randomized Benchmarking"}
+           :fidelity 0.9955
+           :standard-error 0.0
+           :unit "fraction"}]
+       :readout-duration {:value 1.5E-4
+                          :unit "s"}}}}

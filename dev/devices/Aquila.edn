@@ -15,113 +15,113 @@
                       :queue-size "0"}]
  :capabilities
    {:service
-      {:braketSchemaHeader {:name
-                              "braket.device_schema.device_service_properties"
-                            :version "1"}
-       :executionWindows [{:executionDay "Monday"
-                           :windowStartHour "01:00:00"
-                           :windowEndHour "23:59:59"}
-                          {:executionDay "Tuesday"
-                           :windowStartHour "00:00:00"
-                           :windowEndHour "12:00:00"}
-                          {:executionDay "Wednesday"
-                           :windowStartHour "00:00:00"
-                           :windowEndHour "12:00:00"}
-                          {:executionDay "Wednesday"
-                           :windowStartHour "18:00:00"
-                           :windowEndHour "23:59:59"}
-                          {:executionDay "Thursday"
-                           :windowStartHour "00:00:00"
-                           :windowEndHour "12:00:00"}
-                          {:executionDay "Friday"
-                           :windowStartHour "00:00:00"
-                           :windowEndHour "23:59:59"}
-                          {:executionDay "Saturday"
-                           :windowStartHour "00:00:00"
-                           :windowEndHour "23:59:59"}
-                          {:executionDay "Sunday"
-                           :windowStartHour "00:00:00"
-                           :windowEndHour "23:59:59"}]
-       :shotsRange [1 1000]
-       :deviceCost {:price 0.01
-                    :unit "shot"}
-       :deviceDocumentation
-         {:imageUrl
+      {:braket-schema-header {:name
+                                "braket.device_schema.device_service_properties"
+                              :version "1"}
+       :execution-windows [{:execution-day "Monday"
+                            :window-start-hour "01:00:00"
+                            :window-end-hour "23:59:59"}
+                           {:execution-day "Tuesday"
+                            :window-start-hour "00:00:00"
+                            :window-end-hour "12:00:00"}
+                           {:execution-day "Wednesday"
+                            :window-start-hour "00:00:00"
+                            :window-end-hour "12:00:00"}
+                           {:execution-day "Wednesday"
+                            :window-start-hour "18:00:00"
+                            :window-end-hour "23:59:59"}
+                           {:execution-day "Thursday"
+                            :window-start-hour "00:00:00"
+                            :window-end-hour "12:00:00"}
+                           {:execution-day "Friday"
+                            :window-start-hour "00:00:00"
+                            :window-end-hour "23:59:59"}
+                           {:execution-day "Saturday"
+                            :window-start-hour "00:00:00"
+                            :window-end-hour "23:59:59"}
+                           {:execution-day "Sunday"
+                            :window-start-hour "00:00:00"
+                            :window-end-hour "23:59:59"}]
+       :shots-range [1 1000]
+       :device-cost {:price 0.01
+                     :unit "shot"}
+       :device-documentation
+         {:image-url
             "https://a.b.cdn.console.awsstatic.com/59534b58c709fc239521ef866db9ea3f1aba73ad3ebcf60c23914ad8c5c5c878/a6cfc6fca26cf1c2e1c6.png"
           :summary "Analog quantum processor based on neutral atom arrays"
-          :externalDocumentationUrl "https://www.quera.com/aquila"}
-       :deviceLocation "Boston, USA"
-       :updatedAt "2026-02-09T12:00:00+00:00"}
+          :external-documentation-url "https://www.quera.com/aquila"}
+       :device-location "Boston, USA"
+       :updated-at "2026-02-09T12:00:00+00:00"}
     :action {:braket.ir.ahs.program {:version ["1"]
-                                     :actionType "braket.ir.ahs.program"}}
-    :deviceParameters {}
-    :braketSchemaHeader
+                                     :action-type "braket.ir.ahs.program"}}
+    :device-parameters {}
+    :braket-schema-header
       {:name "braket.device_schema.quera.quera_device_capabilities"
        :version "1"}
     :paradigm
-      {:braketSchemaHeader
+      {:braket-schema-header
          {:name "braket.device_schema.quera.quera_ahs_paradigm_properties"
           :version "1"}
-       :qubitCount 256
+       :qubit-count 256
        :lattice {:area {:width 7.5E-5
                         :height 7.6E-5}
-                 :geometry {:spacingRadialMin 4.0E-6
-                            :spacingVerticalMin 4.0E-6
-                            :positionResolution 1.0E-8
-                            :numberSitesMax 256}}
-       :rydberg {:c6Coefficient 5.42E-24
-                 :rydbergGlobal {:timeResolution 1.0E-9
-                                 :detuningSlewRateMax 6.0E15
-                                 :rabiFrequencyResolution 400.0
-                                 :detuningRange [-1.25E8 1.25E8]
-                                 :rabiFrequencyRange [0.0 1.58E7]
-                                 :phaseRange [-99.0 99.0]
-                                 :timeMin 0.0
-                                 :timeDeltaMin 5.0E-8
-                                 :rabiFrequencySlewRateMax 4.0E14
-                                 :detuningResolution 0.2
-                                 :phaseResolution 5.0E-7
-                                 :timeMax 2.0E-5}}
+                 :geometry {:spacing-radial-min 4.0E-6
+                            :spacing-vertical-min 4.0E-6
+                            :position-resolution 1.0E-8
+                            :number-sites-max 256}}
+       :rydberg {:c-6-coefficient 5.42E-24
+                 :rydberg-global {:phase-range [-99.0 99.0]
+                                  :rabi-frequency-resolution 400.0
+                                  :rabi-frequency-slew-rate-max 4.0E14
+                                  :time-resolution 1.0E-9
+                                  :time-max 2.0E-5
+                                  :detuning-range [-1.25E8 1.25E8]
+                                  :phase-resolution 5.0E-7
+                                  :detuning-resolution 0.2
+                                  :time-min 0.0
+                                  :detuning-slew-rate-max 6.0E15
+                                  :time-delta-min 5.0E-8
+                                  :rabi-frequency-range [0.0 1.58E7]}}
        :performance
-         {:lattice {:atomDetectionErrorFalseNegativeTypical 0.001
-                    :atomCaptureProbabilityTypical 0.001
-                    :sitePositionError 1.0E-7
-                    :positionErrorAbs 2.25E-7
-                    :atomLossProbabilityWorst 0.01
-                    :fillingErrorTypical 0.008
-                    :atomDetectionErrorFalsePositiveWorst 0.005
-                    :vacancyErrorTypical 0.001
-                    :atomCaptureProbabilityWorst 0.002
-                    :atomLossProbabilityTypical 0.005
-                    :atomDetectionErrorFalsePositiveTypical 0.001
-                    :vacancyErrorWorst 0.005
-                    :atomPositionError 2.0E-7
-                    :fillingErrorWorst 0.05
-                    :atomDetectionErrorFalseNegativeWorst 0.005}
-          :rydberg {:rydbergGlobal {:rabiFrequencyErrorRel 0.03
-                                    :groundDetectionError 0.05
-                                    :T2EchoEnsemble 7.0E-6
-                                    :T2RabiSingle 8.0E-6
-                                    :T2BlockadedRabiEnsemble 7.0E-6
-                                    :rabiFrequencyGlobalErrorRel 0.02
-                                    :detuningInhomogeneity 1000000.0
-                                    :T2RabiEnsemble 7.0E-6
-                                    :groundPrepError 0.01
-                                    :rabiAmplitudeRampCorrection
-                                      [{:rampTime 5.0E-8
-                                        :rabiCorrection 0.92}
-                                       {:rampTime 7.5E-8
-                                        :rabiCorrection 0.97}
-                                       {:rampTime 1.0E-7
-                                        :rabiCorrection 1.0}]
-                                    :detuningError 1000000.0
-                                    :T1Single 7.5E-5
-                                    :T2StarEnsemble 4.75E-6
-                                    :T2EchoSingle 8.0E-6
-                                    :rydbergDetectionError 0.1
-                                    :rabiFrequencyInhomogeneityRel 0.02
-                                    :rydbergPrepErrorBest 0.05
-                                    :T2BlockadedRabiSingle 8.0E-6
-                                    :rydbergPrepErrorWorst 0.07
-                                    :T2StarSingle 5.0E-6
-                                    :T1Ensemble 7.5E-5}}}}}}
+         {:lattice {:filling-error-typical 0.008
+                    :vacancy-error-typical 0.001
+                    :atom-detection-error-false-negative-typical 0.001
+                    :atom-detection-error-false-positive-typical 0.001
+                    :atom-detection-error-false-positive-worst 0.005
+                    :site-position-error 1.0E-7
+                    :vacancy-error-worst 0.005
+                    :filling-error-worst 0.05
+                    :atom-loss-probability-typical 0.005
+                    :atom-position-error 2.0E-7
+                    :atom-capture-probability-worst 0.002
+                    :position-error-abs 2.25E-7
+                    :atom-detection-error-false-negative-worst 0.005
+                    :atom-loss-probability-worst 0.01
+                    :atom-capture-probability-typical 0.001}
+          :rydberg {:rydberg-global {:t-1-ensemble 7.5E-5
+                                     :rabi-frequency-error-rel 0.03
+                                     :t-1-single 7.5E-5
+                                     :t-2-echo-ensemble 7.0E-6
+                                     :rydberg-prep-error-worst 0.07
+                                     :rabi-frequency-inhomogeneity-rel 0.02
+                                     :rydberg-prep-error-best 0.05
+                                     :t-2-blockaded-rabi-ensemble 7.0E-6
+                                     :detuning-error 1000000.0
+                                     :ground-prep-error 0.01
+                                     :t-2-star-single 5.0E-6
+                                     :rabi-frequency-global-error-rel 0.02
+                                     :t-2-rabi-ensemble 7.0E-6
+                                     :t-2-rabi-single 8.0E-6
+                                     :rydberg-detection-error 0.1
+                                     :t-2-blockaded-rabi-single 8.0E-6
+                                     :rabi-amplitude-ramp-correction
+                                       [{:ramp-time 5.0E-8
+                                         :rabi-correction 0.92}
+                                        {:ramp-time 7.5E-8
+                                         :rabi-correction 0.97}
+                                        {:ramp-time 1.0E-7
+                                         :rabi-correction 1.0}]
+                                     :ground-detection-error 0.05
+                                     :t-2-echo-single 8.0E-6
+                                     :detuning-inhomogeneity 1000000.0
+                                     :t-2-star-ensemble 4.75E-6}}}}}}

@@ -15,127 +15,127 @@
                       :queue-size "0"}]
  :capabilities
    {:service
-      {:braketSchemaHeader {:name
-                              "braket.device_schema.device_service_properties"
-                            :version "1"}
-       :executionWindows [{:executionDay "Weekdays"
-                           :windowStartHour "12:00:00"
-                           :windowEndHour "03:00:00"}]
-       :shotsRange [1 5000]
-       :deviceCost {:price 0.03
-                    :unit "shot"}
-       :deviceDocumentation
-         {:imageUrl
+      {:braket-schema-header {:name
+                                "braket.device_schema.device_service_properties"
+                              :version "1"}
+       :execution-windows [{:execution-day "Weekdays"
+                            :window-start-hour "12:00:00"
+                            :window-end-hour "03:00:00"}]
+       :shots-range [1 5000]
+       :device-cost {:price 0.03
+                     :unit "shot"}
+       :device-documentation
+         {:image-url
             "http://d1.awsstatic.com/re19/Braket/IonQ%20Logo.59ea92b40cff5a2c2e90d9d981b864c2f424c5a8.png"
           :summary "Universal gate-model QPU based on trapped ions"
-          :externalDocumentationUrl "https://ionq.com/quantum-systems/aria"}
-       :deviceLocation "Maryland, USA"
-       :updatedAt "2024-08-24T00:33:02+00:00"}
+          :external-documentation-url "https://ionq.com/quantum-systems/aria"}
+       :device-location "Maryland, USA"
+       :updated-at "2024-08-24T00:33:02+00:00"}
     :action
       {:braket.ir.openqasm.program
-         {:forbiddenPragmas
+         {:forbidden-array-operations ["concatenation" "negativeIndex" "range"
+                                       "rangeWithStep" "slicing" "selection"]
+          :supports-partial-verbatim-box false
+          :support-physical-qubits true
+          :maximum-classical-arrays 1
+          :requires-contiguous-qubit-indices false
+          :forbidden-pragmas
             ["braket_unitary_matrix" "braket_result_type_state_vector"
              "braket_result_type_density_matrix" "braket_result_type_amplitude"
              "braket_result_type_adjoint_gradient"]
-          :supportsUnassignedMeasurements true
-          :supportedPragmas ["braket_result_type_sample"
-                             "braket_result_type_expectation"
-                             "braket_result_type_variance"
-                             "braket_result_type_probability" "verbatim"]
-          :supportedOperations ["x" "y" "z" "rx" "ry" "rz" "h" "cnot" "s" "si"
-                                "t" "ti" "v" "vi" "xx" "yy" "zz" "swap"]
-          :supportsPartialVerbatimBox false
-          :supportedResultTypes [{:name "Sample"
-                                  :observables ["x" "y" "z" "h" "i"]
-                                  :minShots 1
-                                  :maxShots 5000}
-                                 {:name "Expectation"
-                                  :observables ["x" "y" "z" "h" "i"]
-                                  :minShots 1
-                                  :maxShots 5000}
-                                 {:name "Variance"
-                                  :observables ["x" "y" "z" "h" "i"]
-                                  :minShots 1
-                                  :maxShots 5000}
-                                 {:name "Probability"
-                                  :minShots 1
-                                  :maxShots 5000}]
-          :disabledQubitRewiringSupported false
-          :supportPhysicalQubits true
-          :maximumQubitArrays 1
-          :maximumClassicalArrays 1
-          :supportedModifiers []
-          :requiresAllQubitsMeasurement true
-          :actionType "braket.ir.openqasm.program"
-          :requiresContiguousQubitIndices false
-          :forbiddenArrayOperations ["concatenation" "negativeIndex" "range"
-                                     "rangeWithStep" "slicing" "selection"]
-          :version ["1"]}}
-    :deviceParameters
+          :supports-unassigned-measurements true
+          :maximum-qubit-arrays 1
+          :supported-operations ["x" "y" "z" "rx" "ry" "rz" "h" "cnot" "s" "si"
+                                 "t" "ti" "v" "vi" "xx" "yy" "zz" "swap"]
+          :supported-modifiers []
+          :supported-pragmas ["braket_result_type_sample"
+                              "braket_result_type_expectation"
+                              "braket_result_type_variance"
+                              "braket_result_type_probability" "verbatim"]
+          :version ["1"]
+          :supported-result-types [{:name "Sample"
+                                    :observables ["x" "y" "z" "h" "i"]
+                                    :min-shots 1
+                                    :max-shots 5000}
+                                   {:name "Expectation"
+                                    :observables ["x" "y" "z" "h" "i"]
+                                    :min-shots 1
+                                    :max-shots 5000}
+                                   {:name "Variance"
+                                    :observables ["x" "y" "z" "h" "i"]
+                                    :min-shots 1
+                                    :max-shots 5000}
+                                   {:name "Probability"
+                                    :min-shots 1
+                                    :max-shots 5000}]
+          :requires-all-qubits-measurement true
+          :disabled-qubit-rewiring-supported false
+          :action-type "braket.ir.openqasm.program"}}
+    :device-parameters
       {:title "IonqDeviceParameters"
        :description
          "This defines the parameters common to all the IonQ devices."
        :type "object"
        :properties
-         {:braketSchemaHeader
+         {:braket-schema-header
             {:title "Braketschemaheader"
              :default {:name "braket.device_schema.ionq.ionq_device_parameters"
                        :version "1"}
              :const {:name "braket.device_schema.ionq.ionq_device_parameters"
                      :version "1"}}
-          :paradigmParameters {:$ref "#/definitions/GateModelParameters"}
-          :errorMitigation {:title "Errormitigation"
-                            :type "array"
-                            :items {:$ref
-                                      "#/definitions/ErrorMitigationScheme"}}}
+          :paradigm-parameters {:$ref "#/definitions/GateModelParameters"}
+          :error-mitigation {:title "Errormitigation"
+                             :type "array"
+                             :items {:$ref
+                                       "#/definitions/ErrorMitigationScheme"}}}
        :required ["paradigmParameters"]
        :definitions
-         {:GateModelParameters
+         {:gate-model-parameters
             {:title "GateModelParameters"
              :description "Defines parameters common to all gate model devices."
              :type "object"
              :properties
-               {:braketSchemaHeader
+               {:braket-schema-header
                   {:title "Braketschemaheader"
                    :default {:name "braket.device_schema.gate_model_parameters"
                              :version "1"}
                    :const {:name "braket.device_schema.gate_model_parameters"
                            :version "1"}}
-                :qubitCount {:title "Qubitcount"
-                             :minimum 0
-                             :type "integer"}
-                :disableQubitRewiring {:title "Disablequbitrewiring"
-                                       :default false
-                                       :type "boolean"}}
+                :qubit-count {:title "Qubitcount"
+                              :minimum 0
+                              :type "integer"}
+                :disable-qubit-rewiring {:title "Disablequbitrewiring"
+                                         :default false
+                                         :type "boolean"}}
              :required ["qubitCount"]}
-          :ErrorMitigationScheme {:title "ErrorMitigationScheme"
-                                  :description
-                                    "Base class for an error mitigation scheme."
-                                  :type "object"
-                                  :properties {}}}}
-    :braketSchemaHeader {:name
-                           "braket.device_schema.ionq.ionq_device_capabilities"
-                         :version "1"}
-    :paradigm {:braketSchemaHeader
+          :error-mitigation-scheme
+            {:title "ErrorMitigationScheme"
+             :description "Base class for an error mitigation scheme."
+             :type "object"
+             :properties {}}}}
+    :braket-schema-header
+      {:name "braket.device_schema.ionq.ionq_device_capabilities"
+       :version "1"}
+    :paradigm {:braket-schema-header
                  {:name
                     "braket.device_schema.gate_model_qpu_paradigm_properties"
                   :version "1"}
-               :connectivity {:fullyConnected true
-                              :connectivityGraph {}}
-               :qubitCount 25
-               :nativeGateSet ["GPI" "GPI2" "MS"]}
-    :provider {:braketSchemaHeader
+               :connectivity {:fully-connected true
+                              :connectivity-graph {}}
+               :qubit-count 25
+               :native-gate-set ["GPI" "GPI2" "MS"]}
+    :provider {:braket-schema-header
                  {:name "braket.device_schema.ionq.ionq_provider_properties"
                   :version "1"}
-               :fidelity {:1Q {:mean 0.9995}
-                          :2Q {:mean 0.9735}
+               :fidelity {:1-q {:mean 0.9995}
+                          :2-q {:mean 0.9735}
                           :spam {:mean 0.9933}}
-               :timing {:T1 10.0
-                        :T2 1.5
-                        :1Q 1.35E-4
-                        :2Q 6.0E-4
+               :timing {:t-1 10.0
+                        :t-2 1.5
+                        :1-q 1.35E-4
+                        :2-q 6.0E-4
                         :readout 5.0E-5
                         :reset 1.5E-5}
-               :errorMitigation
-                 {:braket.device_schema.error_mitigation.debias.Debias
-                    {:minimumShots 2500}}}}}
+               :error-mitigation
+                 {:braket.device-schema.error-mitigation.debias.-debias
+                    {:minimum-shots 2500}}}}}
