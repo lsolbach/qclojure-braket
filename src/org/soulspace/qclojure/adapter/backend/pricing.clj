@@ -11,6 +11,7 @@
             [clojure.string :as str]
             [clojure.data.json :as json]
             [cognitect.aws.client.api :as aws]
+            [org.soulspace.qclojure.adapter.backend.format :as fmt]
             [org.soulspace.qclojure.adapter.backend.device :as device]))
 
 ;;;
@@ -44,7 +45,6 @@
        provider
        (:default provider-pricing-multipliers)))
 
-
 (defn query-braket-pricing
   "Query AWS Pricing API for Braket service pricing"
   [pricing-client service-code region _device-type]
@@ -55,10 +55,12 @@
                    {:Type "TERM_MATCH"
                     :Field "Location"
                     :Value (or region "US East (N. Virginia)")}]
-          response (aws/invoke pricing-client {:op :GetProducts
-                                               :request {:ServiceCode service-code
-                                                         :Filters filters
-                                                         :MaxResults 100}})]
+          response (fmt/clj-keys
+                    (aws/invoke pricing-client
+                                {:op :GetProducts
+                                 :request {:ServiceCode service-code
+                                           :Filters filters
+                                           :MaxResults 100}}))]
       (if (:cognitect.anomalies/category response)
         {:error response}
         {:products (:PriceList response)}))
@@ -71,7 +73,7 @@
   "Parse Braket pricing from AWS Pricing API response"
   [pricing-products device-type]
   (try
-    (let [products (map #(json/read-str % :key-fn keyword) pricing-products)
+    (let [products (map #(json/read-str % :key-fn fmt/->keyword) pricing-products)
           task-pricing (atom {:price-per-task 0.0 :price-per-shot 0.0})
           currency (atom "USD")]
 

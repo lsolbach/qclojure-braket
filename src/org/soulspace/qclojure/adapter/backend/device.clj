@@ -5,7 +5,6 @@
             [clojure.data.json :as json]
             [clojure.java.io :as io]
             [cognitect.aws.client.api :as aws]
-            [camel-snake-kebab.core :as csk]
             [org.soulspace.qclojure.adapter.backend.format :as fmt]))
 
 ;;;
@@ -62,8 +61,9 @@
   [backend]
   (try
     (println "Fetching devices from AWS Braket..." (:braket-client backend))
-    (let [response (fmt/kebab-keys (aws/invoke (:braket-client backend) {:op :SearchDevices
-                                                                         :request {:filters []}}))]
+    (let [response (fmt/clj-keys (aws/invoke (:braket-client backend)
+                                               {:op :SearchDevices
+                                                :request {:filters []}}))]
       (println "Braket devices response:" response)
       (if (:cognitect.anomalies/category response)
         {:error response}
@@ -83,13 +83,14 @@
    (device-info backend (get-in @(:state backend) [:current-device :id])))
   ([backend device-arn]
    (println "Fetching device from AWS Braket...")
-   (let [response (fmt/kebab-keys (aws/invoke (:braket-client backend) {:op :GetDevice
-                                                                        :request {:deviceArn device-arn}}))
+   (let [response (fmt/clj-keys (aws/invoke (:braket-client backend)
+                                              {:op :GetDevice
+                                               :request {:deviceArn device-arn}}))
          _ (println "GetDevice response:" response)
          _ (println "Keys:" (keys response))]
      (if (:cognitect.anomalies/category response)
        {:error response}
-       (let [capabilities (json/read-str (:device-capabilities response) :key-fn csk/->kebab-case-keyword)
+       (let [capabilities (json/read-str (:device-capabilities response) :key-fn fmt/->keyword)
              _ (println "Device capabilities:" capabilities)]
          (assoc response :capabilities capabilities))))))
 

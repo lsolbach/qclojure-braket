@@ -38,9 +38,9 @@
     (->> "generated/results/braket-f6c3d842-8e86-416c-a92c-9008ff57d8d7-result.edn"
          (slurp)
          (edn/read-string)
-         (fmt/kebab-keys)))
+         (fmt/clj-keys)))
 
-  (fmt/kebab-keys braket-result)
+  (fmt/clj-keys braket-result)
 
   (println (fmt/format-edn braket-result))
   ;
@@ -77,7 +77,7 @@
 (defn quantum-task
   "Get quantum task details from AWS Braket"
   [backend task-arn]
-  (let [response (fmt/kebab-keys (aws/invoke (:braket-client backend) {:op :GetQuantumTask
+  (let [response (fmt/clj-keys (aws/invoke (:braket-client backend) {:op :GetQuantumTask
                                                 :request {:quantumTaskArn task-arn}}))]
     (println "GetQuantumTask response:" response)
     (if (:cognitect.anomalies/category response)
@@ -103,7 +103,7 @@
   (let [device-arn (or (:id (:current-device @(:state backend)))
                        "arn:aws:braket:::device/quantum-simulator/amazon/sv1")]
     (try
-      (let [response (fmt/kebab-keys (aws/invoke (:braket-client backend) {:op :GetDevice
+      (let [response (fmt/clj-keys (aws/invoke (:braket-client backend) {:op :GetDevice
                                                     :request {:deviceArn device-arn}}))
             _ (println "Device availability response:" response)]
         (if (:cognitect.anomalies/category response)
@@ -138,7 +138,7 @@
                       :outputS3KeyPrefix task-key}
         _ (println "Submitting task request:" (json/write-str task-request))
         ;; Submit to Braket
-        response (fmt/kebab-keys (aws/invoke (:braket-client backend) {:op :CreateQuantumTask :request task-request}))]
+        response (fmt/clj-keys (aws/invoke (:braket-client backend) {:op :CreateQuantumTask :request task-request}))]
 
     (if (:cognitect.anomalies/category response)
       {:error response}
@@ -156,7 +156,7 @@
   [backend job-id]
   (if-let [job-info (get-in @(:state backend) [:jobs job-id])]
     (let [task-arn (:task-arn job-info)
-          response (fmt/kebab-keys (aws/invoke (:braket-client backend) {:op :GetQuantumTask
+          response (fmt/clj-keys (aws/invoke (:braket-client backend) {:op :GetQuantumTask
                                                   :request {:quantumTaskArn task-arn}}))
           _ (println "Job status response:" response)]
       (if (:cognitect.anomalies/category response)
@@ -176,7 +176,7 @@
   [backend job-id]
   (if-let [job-info (get-in @(:state backend) [:jobs job-id])]
     (let [task-arn (:task-arn job-info)
-          response (fmt/kebab-keys (aws/invoke (:braket-client backend) {:op :GetQuantumTask
+          response (fmt/clj-keys (aws/invoke (:braket-client backend) {:op :GetQuantumTask
                                                   :request {:quantumTaskArn task-arn}}))
           _ (println "Job result response:" response)]
       (if (:cognitect.anomalies/category response)
@@ -236,7 +236,7 @@
   (if-let [job-info (get-in @(:state backend) [:jobs job-id])]
     (let [task-arn (:task-arn job-info)]
       (try
-        (let [response (fmt/kebab-keys (aws/invoke (:braket-client backend) {:op :CancelQuantumTask
+        (let [response (fmt/clj-keys (aws/invoke (:braket-client backend) {:op :CancelQuantumTask
                                                       :request {:quantumTaskArn task-arn}}))]
           (if (:cognitect.anomalies/category response)
             :cannot-cancel
@@ -252,7 +252,7 @@
   (let [device-arn (or (:id (:current-device @(:state backend)))
                        "arn:aws:braket:::device/quantum-simulator/amazon/sv1")]
     (try
-      (let [response (fmt/kebab-keys (aws/invoke (:braket-client backend) {:op :GetDevice
+      (let [response (fmt/clj-keys (aws/invoke (:braket-client backend) {:op :GetDevice
                                                     :request {:deviceArn device-arn}}))]
         (if (:cognitect.anomalies/category response)
           {:error response}
@@ -596,7 +596,9 @@
   (slurp "dev/req.json")
   (aws/doc (:braket-client backend) :CreateQuantumTask)
 
-  (let [response (aws/invoke (:braket-client backend) {:op :CreateQuantumTask :request (slurp "dev/req.json")})]
+  (let [response (fmt/clj-keys (aws/invoke (:braket-client backend)
+                                             {:op :CreateQuantumTask
+                                              :request (slurp "dev/req.json")}))]
     (println "CreateQuantumTask response:" response))
 
   ;; Test conversion with the provided result

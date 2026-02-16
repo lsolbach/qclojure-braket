@@ -1,8 +1,8 @@
 (ns org.soulspace.qclojure.adapter.backend.task
   "Functions for managing quantum jobs on AWS Braket."
   (:require [clojure.data.json :as json]
-            [camel-snake-kebab.core :as csk]
             [cognitect.aws.client.api :as aws]
+            [org.soulspace.qclojure.adapter.backend.format :as fmt]
             [org.soulspace.qclojure.domain.circuit :as circuit]
             ; [org.soulspace.qclojure.domain.state :as state]
             ))
@@ -39,8 +39,8 @@
   "Parse S3 bucket and key from Braket task response"
   [task-response]
   ; TODO check s-3 vs s3
-  (when-let [output-s3-bucket (:output-s-3-bucket task-response)]
-    (let [output-s3-dir (:output-s-3-directory task-response)]
+  (when-let [output-s3-bucket (:output-s3-bucket task-response)]
+    (let [output-s3-dir (:output-s3-directory task-response)]
       {:bucket output-s3-bucket
        :key-prefix (str output-s3-dir "/")
        :results-key (str output-s3-dir "/results.json")
@@ -247,7 +247,7 @@
   "Parse Braket quantum task results from JSON"
   [results-json]
   (try
-    (let [results (json/read-str results-json :key-fn csk/->kebab-case-keyword)
+    (let [results (json/read-str results-json :key-fn fmt/->keyword)
           measurements (:measurements results)
           measurement-counts (:measurement-counts results)
           measurement-probabilities (:measurement-probabilities results)]
