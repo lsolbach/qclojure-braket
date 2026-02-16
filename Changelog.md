@@ -1,15 +1,18 @@
 # Changelog
 
 ## Version (NEXT)
-* add target :braket to submit options
+* added target :braket to submit options
 * updated QClojure version
 * updated AWS API versions
 * incorporated backend protocol changes
 * implemented MultiDeviceBackend protocol
 * enhanced device handling
+* enhanced job/task result conversion
+* reworked pricing and cost estimation
+* use clojure keyword convention for AWS results
 * fixed `CreateQuantumTask` REST request
 * changed default S3 bucket name, it has to start with `amazon-braket-`
-  * please keep in mind that S3 bucket names hafe to be globally unique
+  * please keep in mind that S3 bucket names have to be globally unique
 * removed obsolete code
 
 ## Version 0.2.0

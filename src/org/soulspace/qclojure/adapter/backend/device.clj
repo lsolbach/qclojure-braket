@@ -78,27 +78,85 @@
 
 
 (defn device-info
-  "Get device information from device ARN"
+  "Get detailed device information from AWS Braket GetDevice API.
+   
+   Fetches device details including capabilities with parsed device-cost data.
+   The result includes the full capabilities map with service properties
+   such as device-cost, execution-windows, and shots-range.
+   
+   Parameters:
+   - backend: BraketBackend instance
+   - device-arn: (optional) Device ARN string; defaults to current device
+   
+   Returns:
+   Device info map with :capabilities key containing parsed JSON capabilities,
+   or {:error ...} on failure."
   ([backend]
    (device-info backend (get-in @(:state backend) [:current-device :id])))
   ([backend device-arn]
-   (println "Fetching device from AWS Braket...")
    (let [response (fmt/clj-keys (aws/invoke (:braket-client backend)
                                               {:op :GetDevice
-                                               :request {:deviceArn device-arn}}))
-         _ (println "GetDevice response:" response)
-         _ (println "Keys:" (keys response))]
+                                               :request {:deviceArn device-arn}}))]
      (if (:cognitect.anomalies/category response)
        {:error response}
-       (let [capabilities (json/read-str (:device-capabilities response) :key-fn fmt/->keyword)
-             _ (println "Device capabilities:" capabilities)]
-         (assoc response :capabilities capabilities))))))
+       (if-let [caps-str (:device-capabilities response)]
+         (let [capabilities (json/read-str caps-str :key-fn fmt/->keyword)]
+           (assoc response :capabilities capabilities))
+         response)))))
+
+(defn device-cost
+  "Extract device-cost pricing from a device's capabilities.
+   
+   Reads the device-cost map from the capabilities service properties
+   returned by the GetDevice API. The cost map contains :price and :unit
+   (either \"shot\" for QPUs or \"minute\" for simulators).
+   
+   Parameters:
+   - device-or-capabilities: Either a device map with :capabilities key,
+     or a capabilities map directly
+   
+   Returns:
+   {:price <number>, :unit <string>} or nil if not available.
+   
+   Examples:
+     {:price 0.03, :unit \"shot\"}    ;; IonQ Aria QPU
+     {:price 0.075, :unit \"minute\"} ;; SV1 simulator"
+  [device-or-capabilities]
+  (let [capabilities (or (:capabilities device-or-capabilities)
+                         device-or-capabilities)]
+    (get-in capabilities [:service :device-cost])))
+
+(defn fetch-device-cost
+  "Fetch device-cost pricing for a device ARN via the GetDevice API.
+   
+   Calls device-info to get the full capabilities and extracts the device-cost.
+   Returns nil on API errors.
+   
+   Parameters:
+   - backend: BraketBackend instance
+   - device-arn: Device ARN string
+   
+   Returns:
+   {:price <number>, :unit <string>} or nil on failure."
+  [backend device-arn]
+  (let [info (device-info backend device-arn)]
+    (when-not (:error info)
+      (device-cost info))))
 
 
 ;;;
 ;;; Multi-Device Management Functions
 ;;;
 (defn devices
+  "Fetch available devices from AWS Braket and update backend state.
+   
+   Calls SearchDevices API and stores the device list in backend state.
+   
+   Parameters:
+   - backend: BraketBackend instance
+   
+   Returns:
+   Collection of device maps."
   [backend]
   (let [devices (braket-devices backend)
         state (:state backend)]
@@ -106,11 +164,31 @@
     devices))
 
 (defn select-device
+  "Select a device for circuit execution on this backend.
+   
+   When a device ARN string is provided, looks up the device from the
+   cached device list. Fetches device capabilities via GetDevice API
+   if not already present, caching the device-cost for pricing.
+   
+   Parameters:
+   - backend: BraketBackend instance
+   - device: Device map or device ARN string
+   
+   Returns:
+   The selected device map (now stored in backend state as :current-device)."
   [backend device]
-  (let [device (if (string? device)
-                 (some (fn [d] (when (= (:id d) device) d))
-                       (:devices @(:state backend)))
-                 device)]
-    (swap! (:state backend) assoc :current-device device)
+  (let [resolved-device (if (string? device)
+                          (some (fn [d] (when (= (:id d) device) d))
+                                (:devices @(:state backend)))
+                          device)
+        ;; Fetch capabilities if not present, to cache device-cost
+        enriched-device (if (:capabilities resolved-device)
+                          resolved-device
+                          (let [info (device-info backend (:id resolved-device))]
+                            (if (:error info)
+                              resolved-device
+                              (merge resolved-device
+                                     (select-keys info [:capabilities])))))]
+    (swap! (:state backend) assoc :current-device enriched-device)
     (:current-device @(:state backend))))
 

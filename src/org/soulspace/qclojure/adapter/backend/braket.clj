@@ -407,6 +407,10 @@
   (estimate-cost [this circuits options]
     (pricing/estimate-cost this circuits options))
 
+  (estimate-cost [this circuits device options]
+    (let [device-arn (if (string? device) device (:id device))]
+      (pricing/estimate-cost this circuits device-arn options)))
+
   backend/BatchJobBackend
   (batch-status [this batch-id]
     (batch-status this batch-id))

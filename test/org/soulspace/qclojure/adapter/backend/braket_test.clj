@@ -52,7 +52,7 @@
       (is (contains? result :job-status)))))
 
 (deftest test-cost-estimation-enhancements
-  (testing "Enhanced cost estimation with provider multipliers"
+  (testing "Cost estimation returns correct structure"
     (let [b (braket/create-braket-simulator {:s3-bucket "test-braket-results"})
           test-circuit (-> (circuit/create-circuit 2)
                            (circuit/h-gate 0)
@@ -63,8 +63,33 @@
       (is (map? cost-estimate))
       (is (contains? cost-estimate :total-cost))
       (is (contains? cost-estimate :cost-breakdown))
-      (is (contains? (:cost-breakdown cost-estimate) :provider-multiplier))
-      (is (number? (:total-cost cost-estimate))))))
+      (is (contains? cost-estimate :pricing-model))
+      (is (contains? cost-estimate :pricing-source))
+      (is (number? (:total-cost cost-estimate)))
+      (is (= "USD" (:currency cost-estimate)))
+      ;; Simulator should use per-minute pricing model
+      (is (= :per-minute (:pricing-model cost-estimate)))
+      ;; Should have simulator-specific breakdown keys
+      (is (contains? (:cost-breakdown cost-estimate) :price-per-minute))
+      (is (contains? (:cost-breakdown cost-estimate) :estimated-minutes))))
+
+  (testing "Cost estimation with 4-arg arity for specific device"
+    (let [b (braket/create-braket-simulator {:s3-bucket "test-braket-results"})
+          test-circuit (-> (circuit/create-circuit 2)
+                           (circuit/h-gate 0)
+                           (circuit/cnot-gate 0 1))
+          ;; Estimate for a QPU device (will use fallback pricing since no real API)
+          cost-estimate (backend/estimate-cost b test-circuit
+                                               "arn:aws:braket:us-east-1::device/qpu/ionq/Forte-1"
+                                               {:shots 1000})]
+      (is (map? cost-estimate))
+      (is (number? (:total-cost cost-estimate)))
+      ;; QPU should use per-shot pricing model
+      (is (= :per-shot (:pricing-model cost-estimate)))
+      ;; QPU breakdown should have per-task and per-shot keys
+      (is (contains? (:cost-breakdown cost-estimate) :per-task-fee))
+      (is (contains? (:cost-breakdown cost-estimate) :price-per-shot))
+      (is (= 0.30 (:per-task-fee (:cost-breakdown cost-estimate)))))))
 
 (deftest test-qpu-backend-creation
   (testing "QPU backend creation requires S3 configuration"
