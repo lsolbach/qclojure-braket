@@ -1,6 +1,6 @@
 # Changelog
 
-## Version (NEXT)
+## Version 0.3.0
 * added target :braket to submit options
 * updated QClojure version
 * updated AWS API versions
