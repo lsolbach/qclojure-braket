@@ -1,5 +1,8 @@
 # Changelog
 
+## Version (NEXT)
+* refactored namespaces
+
 ## Version 0.3.0
 * added target :braket to submit options
 * updated QClojure version
