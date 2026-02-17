@@ -32,7 +32,7 @@
        :device-location "Maryland, USA"
        :updated-at "2024-08-24T00:33:02+00:00"}
     :action
-      {:braket.ir.openqasm.program
+      {:braket-ir-openqasm-program
          {:forbidden-array-operations ["concatenation" "negativeIndex" "range"
                                        "rangeWithStep" "slicing" "selection"]
           :supports-partial-verbatim-box false
@@ -83,10 +83,10 @@
                        :version "1"}
              :const {:name "braket.device_schema.ionq.ionq_device_parameters"
                      :version "1"}}
-          :paradigm-parameters {:$ref "#/definitions/GateModelParameters"}
+          :paradigm-parameters {:ref "#/definitions/GateModelParameters"}
           :error-mitigation {:title "Errormitigation"
                              :type "array"
-                             :items {:$ref
+                             :items {:ref
                                        "#/definitions/ErrorMitigationScheme"}}}
        :required ["paradigmParameters"]
        :definitions
@@ -130,12 +130,12 @@
                :fidelity {:1-q {:mean 0.9995}
                           :2-q {:mean 0.9735}
                           :spam {:mean 0.9933}}
-               :timing {:t-1 10.0
-                        :t-2 1.5
+               :timing {:t1 10.0
+                        :t2 1.5
                         :1-q 1.35E-4
                         :2-q 6.0E-4
                         :readout 5.0E-5
                         :reset 1.5E-5}
                :error-mitigation
-                 {:braket.device-schema.error-mitigation.debias.-debias
+                 {:braket-device-schema-error-mitigation-debias-debias
                     {:minimum-shots 2500}}}}}

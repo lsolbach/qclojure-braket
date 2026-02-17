@@ -32,7 +32,7 @@
           :external-documentation-url "https://xanadu.ai/products/borealis"}
        :device-location "Ontario, Canada"
        :updated-at "2023-06-02T14:51:41.695639+00:00"}
-    :action {:braket.ir.blackbird.program
+    :action {:braket-ir-blackbird-program
                {:version ["1"]
                 :action-type "braket.ir.blackbird.program"
                 :supported-operations ["s" "r0" "r1" "r2" "bs0" "bs1" "bs2"
@@ -59,16 +59,16 @@
          {:name
             "braket.device_schema.continuous_variable_qpu_paradigm_properties"
           :version "1"}
-       :gate-parameters {:loop-1-phase [[-3.141592653589793 3.141592653589793]]
-                         :r-1 [[-1.5707963267948966 1.5707963267948966]]
+       :gate-parameters {:bs1 [[0.0 1.5707963267948966]]
+                         :loop0-phase [[-3.141592653589793 3.141592653589793]]
+                         :loop2-phase [[-3.141592653589793 3.141592653589793]]
+                         :bs2 [[0.0 1.5707963267948966]]
+                         :r2 [[-1.5707963267948966 1.5707963267948966]]
                          :s [[0.0 2.0]]
-                         :bs-1 [[0.0 1.5707963267948966]]
-                         :loop-2-phase [[-3.141592653589793 3.141592653589793]]
-                         :r-0 [[-1.5707963267948966 1.5707963267948966]]
-                         :r-2 [[-1.5707963267948966 1.5707963267948966]]
-                         :loop-0-phase [[-3.141592653589793 3.141592653589793]]
-                         :bs-0 [[0.0 1.5707963267948966]]
-                         :bs-2 [[0.0 1.5707963267948966]]}
+                         :r1 [[-1.5707963267948966 1.5707963267948966]]
+                         :r0 [[-1.5707963267948966 1.5707963267948966]]
+                         :loop1-phase [[-3.141592653589793 3.141592653589793]]
+                         :bs0 [[0.0 1.5707963267948966]]}
        :compiler ["borealis"]
        :target "borealis"
        :compiler-default "borealis"}
