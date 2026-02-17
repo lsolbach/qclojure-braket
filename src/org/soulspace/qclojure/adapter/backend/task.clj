@@ -280,6 +280,133 @@
     {:error {:message "No S3 output location found in task response"
              :type :missing-s3-location}}))
 
+;;;
+;;; Backend State Management
+;;;
+(defn quantum-task
+  "Get quantum task details from AWS Braket"
+  [backend task-arn]
+  (let [response (fmt/clj-keys (aws/invoke (:braket-client backend) {:op :GetQuantumTask
+                                                :request {:quantumTaskArn task-arn}}))]
+    (println "GetQuantumTask response:" response)
+    (if (:cognitect.anomalies/category response)
+      {:error response}
+      response)))
+
+(defn job-status
+  [backend job-id]
+  (if-let [job-info (get-in @(:state backend) [:jobs job-id])]
+    (let [task-arn (:task-arn job-info)
+          response (fmt/clj-keys (aws/invoke (:braket-client backend) {:op :GetQuantumTask
+                                                                       :request {:quantumTaskArn task-arn}}))
+          _ (println "Job status response:" response)]
+      (if (:cognitect.anomalies/category response)
+        :failed
+        (case (:status response)
+          "CREATED" :submitted
+          "QUEUED" :queued
+          "RUNNING" :running
+          "COMPLETED" :completed
+          "FAILED" :failed
+          "CANCELLED" :cancelled
+          :unknown)))
+    :failed))
+
+; TODO simplifix 
+(defn job-result
+  [backend job-id]
+  (if-let [job-info (get-in @(:state backend) [:jobs job-id])]
+    (let [task-arn (:task-arn job-info)
+          response (fmt/clj-keys (aws/invoke (:braket-client backend) {:op :GetQuantumTask
+                                                                       :request {:quantumTaskArn task-arn}}))
+          _ (println "Job result response:" response)]
+      (if (:cognitect.anomalies/category response)
+        {:job-status :failed
+         :job-id job-id
+         :error-message (str "AWS error: " (pr-str response))}
+        (if (= "COMPLETED" (:status response))
+          ;; Retrieve actual results from S3
+          (let [s3-results (retrieve-task-results (:s3-client backend) response)
+                shots (get-in job-info [:options :shots] 0)
+                _ (spit (str job-id "-s3results.edn") s3-results)]
+            (if (:error s3-results)
+              {:job-status :failed
+               :job-id job-id
+               :error-message (get-in s3-results [:error :message])}
+              (let [meas (:measurements s3-results)
+                    ;; Normalize to QClojure's :measurement-results map {"bitstring" count}
+                    measurement-results (cond
+                                          (map? meas) meas
+                                          (sequential? meas)
+                                          (->> meas
+                                               (map (fn [bits]
+                                                      (->> bits
+                                                           (map str)
+                                                           (apply str))))
+                                               (frequencies))
+                                          :else {})
+
+                    ;; Build base Braket result
+                    braket-result {:job-status :completed
+                                   :job-id job-id
+                                   :measurement-results measurement-results
+                                   :probabilities (:probabilities s3-results)
+                                   :shots shots
+                                   :execution-time-ms (- (System/currentTimeMillis)
+                                                         (:submitted-at job-info))
+                                   :task-arn task-arn
+                                   :raw-results (:raw-results s3-results)
+                                   :task-metadata (:task-metadata s3-results)
+                                   :s3-location (:s3-location s3-results)}
+                    _ (spit (str job-id "-braket-result.edn") braket-result)
+                    ;; Convert to QClojure format
+                    result (convert-braket-results braket-result job-info)
+                    _ (spit (str job-id "-result.edn") (fmt/format-edn result))]
+                result)))
+          {:job-status :running
+           :job-id job-id
+           :message "Job not completed yet"})))
+    {:job-status :failed
+     :job-id job-id
+     :error-message "Job not found"}))
+
+
+(defn cancel-job
+  [backend job-id]
+  (if-let [job-info (get-in @(:state backend) [:jobs job-id])]
+    (let [task-arn (:task-arn job-info)]
+      (try
+        (let [response (fmt/clj-keys (aws/invoke (:braket-client backend) {:op :CancelQuantumTask
+                                                                           :request {:quantumTaskArn task-arn}}))]
+          (if (:cognitect.anomalies/category response)
+            :cannot-cancel
+            (do
+              (swap! (:state backend) assoc-in [:jobs job-id :cancelled-at] (System/currentTimeMillis))
+              :cancelled)))
+        (catch Exception _e
+          :cannot-cancel)))
+    :not-found))
+
+(defn queue-status
+  [backend]
+  (let [device-arn (or (:id (:current-device @(:state backend)))
+                       "arn:aws:braket:::device/quantum-simulator/amazon/sv1")]
+    (try
+      (let [response (fmt/clj-keys (aws/invoke (:braket-client backend) {:op :GetDevice
+                                                                         :request {:deviceArn device-arn}}))]
+        (if (:cognitect.anomalies/category response)
+          {:error response}
+          (let [queue-info (:device-queue-info response)]
+            {:device-arn device-arn
+             :queue-type (:queue-type queue-info)
+             :queue-size (:queue-size queue-info)
+             :priority (:queue-priority queue-info)
+             :status (:device-status response)})))
+      (catch Exception e
+        {:error {:message (.getMessage e) :type :api-error}}))))
+
+
+
 (comment ; conversion tests
   (def sim-result
     {:measurements [[0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0] [1 1] [1 1] [0 0]

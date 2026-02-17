@@ -192,3 +192,30 @@
     (swap! (:state backend) assoc :current-device enriched-device)
     (:current-device @(:state backend))))
 
+;;;
+;;; Device Availability
+;;;
+(defn available?
+  "Check if the currently selected device is available for execution.
+   
+   Calls GetDevice API to check the device status. Returns true if the
+   device status is ONLINE, false otherwise or on API errors.
+   
+   Parameters:
+   - backend: BraketBackend instance
+   
+   Returns:
+   true if device is ONLINE, false otherwise."
+  [backend]
+  (let [device-arn (or (:id (:current-device @(:state backend)))
+                       "arn:aws:braket:::device/quantum-simulator/amazon/sv1")]
+    (try
+      (let [response (fmt/clj-keys (aws/invoke (:braket-client backend) {:op :GetDevice
+                                                                         :request {:deviceArn device-arn}}))
+            _ (println "Device availability response:" response)]
+        (if (:cognitect.anomalies/category response)
+          false
+          (= "ONLINE" (:device-status response))))
+      (catch Exception _e
+        false))))
+
