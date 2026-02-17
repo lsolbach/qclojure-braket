@@ -6,7 +6,7 @@ supported by Amazon Braket.
 
 Disclaimers:
 * *experimental/alpha*
-  * the braket backend implementation is *yet* untested against AWS
+  * the braket backend implementation is tested with the SV1 simulator and the IonQ Forte QPU
 * Using Amazon Braket costs [money](https://aws.amazon.com/braket/pricing/) even for using simulators
   * use the simulators provided by QClojure for experimentation first
 
